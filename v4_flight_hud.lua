@@ -324,7 +324,7 @@ local function display_center()
     self.draw_pitch_ladder = function()
         for _, pitch in ipairs(self.pitch_values) do
             local y_offset = (-pitch / 20) * self.ladder_spacing
-            local ladder_y = self.horizon_y + y_offset
+            local ladder_y = self.horizon_y + y_offset + 1
             local char = pitch > 0 and "\xAF" or "_"
 
             -- Left and right side
