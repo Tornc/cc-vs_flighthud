@@ -1,13 +1,28 @@
 -- Written by Ton, with love. Feel free to modify, consider this under the MIT license.
 
--- Modules --
+-- TEST: REMOVE LATER
+local ship = require("fake_ShipAPI")
+periphemu.create("front", "monitor")
+periphemu.create("back", "speaker")
+periphemu.create("top", "modem")
+
+--[[
+    MODULES
+]]
+
 local dfpwm = require("cc.audio.dfpwm")
 
--- PERIPHERALS --
+--[[
+    PERIPHERALS
+]]
+
 local MONITOR = peripheral.find("monitor")
 local SPEAKER = peripheral.find("speaker")
+local MODEM = peripheral.find("modem")
 
--- CONSTANTS --
+--[[
+    CONSTANTS
+]]
 -- You can touch these
 local GROUND_LEVEL = tonumber(arg[1]) or 0   -- Change this to how high your map's ground level is.
 local INVERT_ROLL = arg[2] == "invert"
@@ -22,19 +37,27 @@ local SOUNDS = {                             -- Format: "FILE_NAME", sound coold
     over_g_warning = { "OVER_G", 100 },
     hit_warning = { "WARNING", 60 }, -- Look, I don't have a better system other than mass to detect damage
 }
+local HUD_BACKGROUND_COLOUR = 0x000000
+local HUD_TEXT_COLOUR = 0x00FF00
 
 local DELTA_TICK = 3   -- How often the script runs (3 = once every 3 ticks), increase if the screen flickers a lot (lag)
-local SOUND_VOLUME = 3 -- 🗣️🗣️🗣️
+local SOUND_VOLUME = 1 -- 🗣️🗣️🗣️
+
+local MY_ID = "pilot_comp"
+local WSO_ID = "wso_comp"
+local INCOMING_CHANNEL, OUTGOING_CHANNEL = 6060, 6060
 
 -- No need to touch these
-local SCREEN_WIDTH = 15
-local SCREEN_HEIGHT = 10
+local SCREEN_WIDTH, SCREEN_HEIGHT = 15, 10
 local DIRECTIONS = { "N", "E", "S", "W" }
-local GRAVITY = 10           -- m/s (I'm using CBC's gravity value)
+local GRAVITY = 10 -- m/s (I'm using CBC's gravity value)
 local SOUND_EXTENSION_TYPE = "dfpwm"
 local DECODER = dfpwm.make_decoder()
 
--- STATE VARIABLES --
+--[[
+    STATE VARIABLES
+]]
+
 local current_time = 0
 local plane = {
     x = 0, -- Position
@@ -68,8 +91,13 @@ local last_played = {}
 for _, v in pairs(SOUNDS) do
     last_played[v[1]] = 0
 end
+local inbox, old_inbox = {}, {}
+local outgoing_message = { MY_ID }
 
--- FUNCTIONS --
+--[[
+    UTIL
+]]
+
 local function round(number, decimal)
     if decimal then
         local fmt_str = "%." .. decimal .. "f"
@@ -79,12 +107,11 @@ local function round(number, decimal)
     end
 end
 
-local function write_at(x, y, text, colour)
-    local previous_colour = MONITOR.getTextColour()
-    if colour then MONITOR.setTextColour(colour) end
-    MONITOR.setCursorPos(x, y)
-    MONITOR.write(text)
-    MONITOR.setTextColour(previous_colour)
+local function center_string(string, width)
+    local padding = width - #string
+    local left_pad = math.floor(padding / 2)
+    local right_pad = padding - left_pad
+    return string.rep(" ", left_pad) .. string .. string.rep(" ", right_pad)
 end
 
 local function run_async(func, ...)
@@ -97,7 +124,40 @@ local function run_async(func, ...)
     coroutine.resume(co)
 end
 
-local function check_files_exists()
+--[[
+    NETWORKING
+]]
+
+local function message_handler()
+    if not MODEM then return end
+    print("Modem attached.")
+    MODEM.open(INCOMING_CHANNEL)
+    while true do
+        local channel, incoming_message
+        repeat
+            _, _, channel, _, incoming_message, _ = os.pullEvent("modem_message")
+        until channel == INCOMING_CHANNEL
+
+        if incoming_message["id"] ~= nil then
+            inbox[incoming_message["id"]] = incoming_message
+        end
+
+        -- Clear disconnected IDs
+        for id, _ in pairs(inbox) do
+            if inbox[id] ~= old_inbox[id] then
+                old_inbox[id] = inbox[id]
+            else
+                inbox[id] = nil
+            end
+        end
+    end
+end
+
+--[[
+    SOUND
+]]
+
+local function check_sound_files_exists()
     local file_path
     for _, v in pairs(SOUNDS) do
         file_path = v[1] .. "." .. SOUND_EXTENSION_TYPE
@@ -129,6 +189,7 @@ end
 local function sound_player()
     if not SPEAKER then return end
     print("Speaker attached.")
+    check_sound_files_exists()
     while true do
         -- Maybe rework the if-branching, it's kinda scuffed ngl
         if plane.has_taken_off then
@@ -148,6 +209,18 @@ local function sound_player()
 
         sleep(DELTA_TICK / 20)
     end
+end
+
+--[[
+    HUD
+]]
+
+local function write_at(x, y, text, colour)
+    local previous_colour = MONITOR.getTextColour()
+    if colour then MONITOR.setTextColour(colour) end
+    MONITOR.setCursorPos(x, y)
+    MONITOR.write(text)
+    MONITOR.setTextColour(previous_colour)
 end
 
 -- Consider this function as copied from Endal
@@ -271,27 +344,23 @@ local function draw_speed()
     )
 end
 
-local function display_center()
+local function center_display()
     local self = setmetatable({}, {})
-    self.init = function()
-        self.center_x = 8
-        self.center_y = 6
-        self.width = 9
-        self.height = 7
+    self.center_x = 8
+    self.center_y = 6
+    self.width = 9
+    self.height = 7
 
-        self.min_x = self.center_x - math.floor(self.width / 2)
-        self.max_x = self.center_x + math.ceil(self.width / 2)
-        self.min_y = self.center_y - math.floor(self.height / 2)
-        self.max_y = self.center_y + math.ceil(self.height / 2)
+    self.min_x = self.center_x - math.floor(self.width / 2)
+    self.max_x = self.center_x + math.ceil(self.width / 2)
+    self.min_y = self.center_y - math.floor(self.height / 2)
+    self.max_y = self.center_y + math.ceil(self.height / 2)
 
-        self.horizon_y = 0
+    self.horizon_y = 0
 
-        self.pitch_values = {}
-        for i = 90, -90, -20 do table.insert(self.pitch_values, i) end
-        self.ladder_spacing = 2
-
-        return self
-    end
+    self.pitch_values = {}
+    for i = 90, -90, -20 do table.insert(self.pitch_values, i) end
+    self.ladder_spacing = 2
 
     self.draw = function()
         self.draw_horizon()
@@ -301,7 +370,7 @@ local function display_center()
 
     self.draw_horizon = function()
         -- Calculate horizon line position based on pitch
-        self.horizon_y = self.center_y + math.floor(plane.pitch * (self.height / 2) / 45)
+        self.horizon_y = self.center_y + math.floor(round(plane.pitch) * (self.height / 2) / 45)
 
         -- Calculate roll
         local rounded_roll_deg = round(plane.roll)
@@ -323,7 +392,7 @@ local function display_center()
 
     self.draw_pitch_ladder = function()
         for _, pitch in ipairs(self.pitch_values) do
-            local y_offset = (-pitch / 20) * self.ladder_spacing
+            local y_offset = math.floor(-pitch / 20) * self.ladder_spacing
             local ladder_y = self.horizon_y + y_offset + 1
             local char = pitch > 0 and "\xAF" or "_"
 
@@ -349,7 +418,7 @@ local function display_center()
         if y >= self.min_y and y < self.max_y then
             write_at(x, y, char)
             if pitch then
-                local formatted_number = string.format("% 3d", pitch)
+                local formatted_number = string.format("% 2d", pitch / 10)
                 write_at(x + 1, y, formatted_number)
             end
         end
@@ -358,12 +427,17 @@ local function display_center()
     return self
 end
 
-local function display_hud()
+local function hud_displayer()
     if not MONITOR then return end
     print("Monitor attached.")
-    MONITOR.setTextScale(0.5)
-    MONITOR.setTextColour(colours.yellow)
-    local CENTER_DISPLAY = display_center().init()
+    -- TEST: UNCOMMENT LATER
+    -- MONITOR.setTextScale(0.5)
+    -- LATER: this is really stupid
+    MONITOR.setPaletteColour(colours.black, HUD_BACKGROUND_COLOUR)
+    MONITOR.setBackgroundColour(colours.black)
+    MONITOR.setPaletteColour(colours.lime, HUD_TEXT_COLOUR)
+    MONITOR.setTextColour(colours.lime)
+    local CENTER_DISPLAY = center_display()
     while true do
         MONITOR.clear()
 
@@ -375,6 +449,10 @@ local function display_hud()
         sleep(DELTA_TICK / 20)
     end
 end
+
+--[[
+    STATE
+]]
 
 local function update_information()
     local position = ship.getWorldspacePosition()
@@ -426,46 +504,61 @@ local function update_information()
 
     plane.rel_y = plane.y - GROUND_LEVEL
 
-    if not SPEAKER then return end
+    if SPEAKER then
+        local new_mass = ship.getMass()
+        if new_mass < plane.mass then
+            plane.got_hit = true
+        end
+        plane.mass = new_mass
 
-    local new_mass = ship.getMass()
-    if new_mass < plane.mass then
-        plane.got_hit = true
+        if not plane.has_taken_off and plane.rel_y > TAKEN_OFF_THRESHOLD then
+            plane.has_taken_off = true
+        elseif plane.has_taken_off and (plane.rel_y < LANDED_THRESHOLD or ship.isStatic()) then
+            plane.has_taken_off = false
+        end
+        plane.descending = round(plane.vy, 1) < 0
     end
-    plane.mass = new_mass
 
-    if not plane.has_taken_off and plane.rel_y > TAKEN_OFF_THRESHOLD then
-        plane.has_taken_off = true
-    elseif plane.has_taken_off and (plane.rel_y < LANDED_THRESHOLD or ship.isStatic()) then
-        plane.has_taken_off = false
+    if MODEM then
+        -- TOOD: Process inbox
     end
-    plane.descending = round(plane.vy, 1) < 0
 end
 
 local function update_state()
-    if SPEAKER then check_files_exists() end
     while true do
+        -- TEST: REMOVE LATER
+        ship.run(DELTA_TICK)
+
         update_information()
         current_time = current_time + DELTA_TICK
         sleep(DELTA_TICK / 20)
     end
 end
 
-parallel.waitForAll(update_state, display_hud, sound_player)
+parallel.waitForAll(update_state, hud_displayer, sound_player, message_handler)
 
 -- 1x1 monitor resolution is only 7x4 💀
 -- 1x1 monitor resolution at 0.5 scale is 15x10
 
--- New features planned
+-- Priority: WSO features
+-- Colouring the « » in a different colour when you are within like 100-150 blocks
+-- Add a yaw and pitch marker where the target is
+--      The upwards triangle could be the thing that gets moved. (indicates dYaw)
+--      Not sure what kind of pitch marker could be used
+-- TODO: swap over to os.time()
+
+-- Priority: bugfixing (end it all)
+-- TODO: pitch is actually roll if you assemble it in a weird direction --> invert option?
+-- TODO: check if this is also valid for roll.
+
+-- Priority: new features planned
 -- TODO: if you lose mass (get hit), make the hud flash
--- TODO: make the + move (maybe change it), to be the total velocity vector
+-- TODO: make the + move (maybe change it), to be the total velocity vector/flight path vector
+-- TODO: split the horizon into 2 lines, like huds irl (2x3 I'm thinking --> width//2 -1)
+-- TODO: figure out turtles, they allow for more compactness (3 periph slots, takes up 0 space)
 
--- Meh
--- TODO: fix clutter / colours
--- TODO: add the bluetooth voice easter egg (ready to pair + connected succesfully)
--- TODO: add comments and clean stuff up
--- TODO: make a better setup video which actually fucking shows files dragging in
-
--- Unlikely
--- MAYBE: fuel alarms (low fuel + bingo) -- 
--- MAYBE: missile counter
+-- Priority: procrastination
+-- fix clutter / colours
+-- add the bluetooth voice easter egg (ready to pair + connected succesfully)
+-- add comments and clean stuff up
+-- make a better setup video which actually fucking shows files dragging in
