@@ -362,13 +362,13 @@ local function center_display()
     for i = 90, -90, -20 do table.insert(self.pitch_values, i) end
     self.ladder_spacing = 2
 
-    self.draw = function()
+    function self.draw()
         self.draw_horizon()
         self.draw_pitch_ladder()
         self.draw_center_marker()
     end
 
-    self.draw_horizon = function()
+    function self.draw_horizon()
         -- Calculate horizon line position based on pitch
         self.horizon_y = self.center_y + math.floor(round(plane.pitch) * (self.height / 2) / 45)
 
@@ -390,8 +390,8 @@ local function center_display()
         plot_line(x1, y1, x2, y2)
     end
 
-    self.draw_pitch_ladder = function()
-        for _, pitch in ipairs(self.pitch_values) do
+    function self.draw_pitch_ladder()
+        for _, pitch in pairs(self.pitch_values) do
             local y_offset = math.floor(-pitch / 20) * self.ladder_spacing
             local ladder_y = self.horizon_y + y_offset + 1
             local char = pitch > 0 and "\xAF" or "_"
@@ -402,12 +402,12 @@ local function center_display()
         end
     end
 
-    self.draw_center_marker = function()
+    function self.draw_center_marker()
         write_at(self.center_x, self.center_y, "+")
     end
 
     -- Clip a line to stay within bounds
-    self.clip_point = function(x, y)
+    function self.clip_point(x, y)
         return math.max(self.min_x, math.min(x, self.max_x)),
             math.max(self.min_y, math.min(y, self.max_y - 1))
     end
@@ -550,6 +550,7 @@ parallel.waitForAll(update_state, hud_displayer, sound_player, message_handler)
 -- Priority: bugfixing (end it all)
 -- TODO: pitch is actually roll if you assemble it in a weird direction --> invert option?
 -- TODO: check if this is also valid for roll.
+-- TODO: invert pitch if you're upside down? (roll)
 
 -- Priority: new features planned
 -- TODO: if you lose mass (get hit), make the hud flash

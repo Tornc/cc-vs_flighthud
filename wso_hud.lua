@@ -45,6 +45,13 @@ local plane = {
 local inbox, old_inbox = {}, {}
 local outgoing_message = { MY_ID }
 local targets = {}
+local current_target
+-- TEST: remove later
+targets = {
+    { "alpha",      10000, 20000, 30000 },
+    { "bravo",      30,    20,    110 },
+    { "charlie123", 86,    -10,   -340 },
+}
 local mouse_x, mouse_y = 0, 0
 
 --[[
@@ -128,77 +135,236 @@ local function write_at(x, y, text, colour)
     MONITOR.setTextColour(previous_colour)
 end
 
--- Consider this function as copied from Endal
-local line_types = { "\xAF", "-", "_", "|" } -- High, middle, low, vertical
-local function plot_line(x0, y0, x1, y1)
-    y1 = math.floor(y1 * (#line_types - 1) + 1)
-    y0 = math.floor(y0 * (#line_types - 1) + 1)
-    x1 = math.floor(x1)
-    x0 = math.floor(x0)
-    local dx = math.abs(x1 - x0)
-    local sx = x0 < x1 and 1 or -1
-    local dy = -math.abs(y1 - y0)
-    local sy = y0 < y1 and 1 or -1
-    local error = dx + dy
-
-    while true do
-        local char = dx < 3 and
-            line_types[#line_types] or
-            line_types[math.floor(y0 % (#line_types - 1)) + 1]
-        write_at(
-            x0,
-            math.floor(y0 / (#line_types - 1)),
-            char
-        )
-        if x0 == x1 and y0 == y1 then break end
-        local e2 = 2 * error
-        if e2 >= dy then
-            if x0 == x1 then break end
-            error = error + dy
-            x0 = x0 + sx
-        end
-        if e2 <= dx then
-            if y0 == y1 then break end
-            error = error + dx
-            y0 = y0 + sy
-        end
-    end
-end
-
-local function button()
+local function ui_element()
     local self = setmetatable({}, {})
 
-    self.create = function(x, y, text, colour)
+    function self.create(x, y, text, colour)
         self.x0 = x
         self.y0 = y
-        self.lines = {}
-        for line in string.gmatch(text, "[^\r\n]+") do table.insert(self.lines, line) end
+        self.text = text
         self.colour = colour and colour or MONITOR.getTextColour()
 
-        local width = 0
-        for _, line in ipairs(self.lines) do width = math.max(width, #line) end
-        local height = #self.lines
+        local width, height = self.calculate_dimensions(self.text)
         self.x1 = self.x0 + width - 1
         self.y1 = self.y0 + height - 1
         return self
     end
 
-    self.is_clicked = function()
-        return
-            mouse_x >= self.x0 and mouse_x <= self.x1 and
-            mouse_y >= self.y0 and mouse_y <= self.y1
-    end
-
-    self.draw = function()
+    function self.draw()
         for i, line in ipairs(self.lines) do
             write_at(self.x0, self.y0 + i - 1, line, self.colour)
+        end
+    end
+
+    function self.calculate_dimensions(text)
+        if type(text) ~= "string" then text = tostring(text) end
+        self.lines = {}
+        for line in string.gmatch(text, "[^\r\n]+") do table.insert(self.lines, line) end
+        local w = 0
+        for _, line in pairs(self.lines) do w = math.max(w, #line) end
+        return w, #self.lines
+    end
+
+    return self
+end
+
+local function static_text()
+    return ui_element()
+end
+
+local function dynamic_text()
+    local self = ui_element()
+    local super_create = self.create
+
+    function self.create(x, y, variable_ref, colour)
+        super_create(x, y, tostring(variable_ref()), colour)
+        self.variable_ref = variable_ref
+        return self
+    end
+
+    function self.update()
+        self.set_text(tostring(self.variable_ref()))
+    end
+
+    function self.set_text(text)
+        self.text = text
+        local width, height = self.calculate_dimensions(self.text)
+        self.x1 = self.x0 + width - 1
+        self.y1 = self.y0 + height - 1
+    end
+
+    return self
+end
+
+local function button()
+    local self = ui_element()
+    local super_create = self.create
+
+    function self.create(x, y, text, action, colour)
+        super_create(x, y, text, colour)
+        self.action = action
+        return self
+    end
+
+    function self.on_click()
+        if mouse_x >= self.x0 and mouse_x <= self.x1 and
+            mouse_y >= self.y0 and mouse_y <= self.y1 then
+            mouse_x, mouse_y = 0, 0
+            if type(self.action) == "function" then self.action() end
         end
     end
 
     return self
 end
 
-local function confirm_screen()
+local function screen()
+    local self = setmetatable({}, {})
+
+    function self.create(elements)
+        self.elements = elements
+        return self
+    end
+
+    function self.run()
+        for _, elem in pairs(self.elements) do
+            if type(elem.update) == "function" then elem.update() end
+            if type(elem.on_click) == "function" then elem.on_click() end
+            elem.draw()
+        end
+    end
+
+    return self
+end
+
+local function create_main_screen(switch_confirm_screen)
+    local function switch_previous_target()
+        if #targets > 0 then
+            local current_index = 1
+            for i, target in ipairs(targets) do
+                if target == current_target then
+                    current_index = i
+                    break
+                end
+            end
+            current_index = (current_index - 2) % #targets + 1
+            current_target = targets[current_index]
+        end
+    end
+
+    local function switch_next_target()
+        if #targets > 0 then
+            local current_index = 1
+            for i, target in ipairs(targets) do
+                if target == current_target then
+                    current_index = i
+                    break
+                end
+            end
+            current_index = current_index % #targets + 1
+            current_target = targets[current_index]
+        end
+    end
+
+    local DT_TARGET_POS = dynamic_text().create(1, 1, function()
+        local tgt, tgt_x, tgt_y, tgt_z = "None", "--", "--", "--"
+        if current_target then
+            tgt = current_target[1]
+            tgt_x = tostring(round(current_target[2]))
+            tgt_y = tostring(round(current_target[3]))
+            tgt_z = tostring(round(current_target[4]))
+        end
+        return
+            tgt .. "\n" ..
+            "X:" .. tgt_x .. "\n" ..
+            "Y:" .. tgt_y .. "\n" ..
+            "Z:" .. tgt_z .. "\n"
+    end)
+
+    -- TODO: implement
+    local DT_DELTA_POS = dynamic_text().create(9, 2, function()
+        local dx, dy, dz = "--", "--", "--"
+        if current_target then
+            dx = tostring(round(1000))
+            dy = tostring(round(1001))
+            dz = tostring(round(1002))
+        end
+        return
+            "dX:" .. dx .. "\n" ..
+            "dY:" .. dy .. "\n" ..
+            "dZ:" .. dz .. "\n"
+    end)
+
+    -- TODO: implement
+    local DT_DELTA_ORIENTATION = dynamic_text().create(1, 5, function()
+        local dpitch, dyaw = "--", "--"
+        if current_target then
+            dpitch = tostring(round(10))
+            dyaw = tostring(round(50))
+        end
+        return
+            "dPt: " .. dpitch .. "\xB0\n" ..
+            "dYw: " .. dyaw .. "\xB0\n"
+    end)
+
+    -- TODO: implement
+    local ARRIVAL_INFO = dynamic_text().create(1, 7, function()
+        -- speed should probably be an average
+        local speed, eta
+        if current_target then
+            speed = tostring(round(80))
+            eta = round(100) .. "s"
+        end
+        return
+            "SPD: " .. speed .. "\n" ..
+            "ETA: " .. eta .. "\n"
+    end)
+
+    local BTN_PREVIOUS = button().create(1, 10, "[PRV]", switch_previous_target)
+    local BTN_NEXT = button().create(11, 10, "[NXT]", switch_next_target)
+    local BTN_REMOVE = button().create(11, 1, "[RMV]", switch_confirm_screen, colours.red)
+
+    return screen().create({
+        DT_TARGET_POS, DT_DELTA_POS, BTN_REMOVE,
+        DT_DELTA_ORIENTATION,
+        ARRIVAL_INFO,
+        BTN_PREVIOUS, BTN_NEXT,
+    })
+end
+
+local function create_remove_confirmation_screen(switch_main_screen)
+    local function remove_current_target()
+        local current_index = 1
+        for i, target in ipairs(targets) do
+            if target == current_target then
+                current_index = i
+                break
+            end
+        end
+        table.remove(targets, current_index)
+        if #targets > 0 then
+            current_target = targets[current_index > #targets and 1 or current_index]
+        else
+            current_target = nil
+        end
+    end
+
+    local ST_QUESTION_TEXT = static_text().create(1, 3, center_string("Remove target?", SCREEN_WIDTH))
+    local DT_TEXT = dynamic_text().create(1, 4, function()
+        local text = current_target and current_target[1] or "No targets left"
+        return center_string(text, SCREEN_WIDTH)
+    end)
+
+    local BTN_CANCEL = button().create(1, 7, "[CANCEL]", switch_main_screen)
+    local BTN_OK = button().create(10, 7, "[OK]", function()
+        remove_current_target()
+        switch_main_screen()
+    end, colours.red)
+
+    return screen().create({
+        ST_QUESTION_TEXT,
+        DT_TEXT,
+        BTN_CANCEL, BTN_OK
+    })
 end
 
 local function HUD_displayer()
@@ -212,20 +378,18 @@ local function HUD_displayer()
     MONITOR.setPaletteColour(colours.lime, HUD_TEXT_COLOUR)
     MONITOR.setTextColour(colours.lime)
 
-    local PREVIOUS_BUTTON = button().create(1, 10, "[PRV]")
-    local NEXT_BUTTON = button().create(11, 10, "[NXT]")
-    local REMOVE_BUTTON = button().create(6, 5, "[RMV]", colours.red)
+    current_target = #targets > 0 and targets[1] or nil
+
+    local current_screen
+    local MAIN_SCREEN, REMOVE_CONFIRM_SCREEN
+
+    MAIN_SCREEN = create_main_screen(function() current_screen = REMOVE_CONFIRM_SCREEN end)
+    REMOVE_CONFIRM_SCREEN = create_remove_confirmation_screen(function() current_screen = MAIN_SCREEN end)
+
+    current_screen = MAIN_SCREEN
     while true do
         MONITOR.clear()
-
-        PREVIOUS_BUTTON.draw()
-        NEXT_BUTTON.draw()
-        REMOVE_BUTTON.draw()
-
-        term.clear()
-        print(mouse_x, mouse_y)
-        print(PREVIOUS_BUTTON.is_clicked(), NEXT_BUTTON.is_clicked(), REMOVE_BUTTON.is_clicked())
-
+        current_screen.run()
         sleep(DELTA_TICK / 20)
     end
 end
@@ -239,8 +403,6 @@ local function update_information()
 end
 
 local function update_state()
-    -- TEST: remove later
-    targets = { { 100, 200, 300 }, { 30, 20, 110 } }
     while true do
         -- TEST: REMOVE LATER
         ship.run(DELTA_TICK)
@@ -252,9 +414,3 @@ local function update_state()
 end
 
 parallel.waitForAll(update_state, HUD_displayer, input_handler, message_handler)
-
-
--- TODO: display information --> what do we need?
--- target xyz, distance ship to target xyz, current speed(?), ETA (area close enough to target)
--- delta yaw, pitch, roll(?)
--- option to remove target (NEEDS a confirm)
