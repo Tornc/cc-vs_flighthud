@@ -20,7 +20,7 @@ local HUD_TEXT_COLOUR = 0x00FF00
 local DELTA_TICK = 3
 
 local MY_ID = "wso_comp"
-local PILOT_ID = "pilot_comp"
+local DESIGNATOR_ID = "i_am_a_designator"
 local INCOMING_CHANNEL, OUTGOING_CHANNEL = 6060, 6060
 
 -- No need to touch these
@@ -41,6 +41,20 @@ local plane = {
     yaw = 0, -- Orientation
     pitch = 0,
     roll = 0,
+
+    speed = 0,
+    max_speed = 0,
+
+    dx = 0, -- Distance to target
+    dy = 0,
+    dz = 0,
+    dist = 0,
+    tyaw = 0,   -- Yaw and pitch required
+    tpitch = 0, -- to face the target
+    dyaw = 0,
+    dpitch = 0,
+
+    eta = 0, -- Time of arrival in seconds
 }
 local inbox, old_inbox = {}, {}
 local outgoing_message = { MY_ID }
@@ -48,9 +62,9 @@ local targets = {}
 local current_target
 -- TEST: remove later
 targets = {
-    { "alpha",      10000, 20000, 30000 },
-    { "bravo",      30,    20,    110 },
-    { "charlie123", 86,    -10,   -340 },
+    { name = "alpha",      x = 1000, y = 0,   z = 0 },
+    { name = "bravo",      x = 2500, y = 200, z = 2500 },
+    { name = "charlie123", x = 86,   y = -10, z = -340 },
 }
 local mouse_x, mouse_y = 0, 0
 
@@ -74,14 +88,16 @@ local function center_string(string, width)
     return string.rep(" ", left_pad) .. string .. string.rep(" ", right_pad)
 end
 
-local function run_async(func, ...)
-    local args = { ... }
-    local co = coroutine.create(
-        function()
-            func(unpack(args))
-        end
-    )
-    coroutine.resume(co)
+local function format_time(seconds)
+    if seconds < 1000 then
+        return string.format("%ds", seconds)
+    elseif seconds < 60000 then
+        local minutes = math.floor(seconds / 60)
+        return string.format("%dm", minutes)
+    else
+        local hours = math.floor(seconds / 3600)
+        return string.format("%dh", hours)
+    end
 end
 
 --[[
@@ -93,7 +109,7 @@ local function message_handler()
     print("Modem attached.")
     MODEM.open(INCOMING_CHANNEL)
     while true do
-        local channel, incoming_message
+        local _, _, channel, _, incoming_message, _
         repeat
             _, _, channel, _, incoming_message, _ = os.pullEvent("modem_message")
         until channel == INCOMING_CHANNEL
@@ -101,14 +117,15 @@ local function message_handler()
         if incoming_message["id"] ~= nil then
             inbox[incoming_message["id"]] = incoming_message
         end
+    end
+end
 
-        -- Clear disconnected IDs
-        for id, _ in pairs(inbox) do
-            if inbox[id] ~= old_inbox[id] then
-                old_inbox[id] = inbox[id]
-            else
-                inbox[id] = nil
-            end
+local function clear_disconnected_ids()
+    for id, _ in pairs(inbox) do
+        if inbox[id] ~= old_inbox[id] then
+            old_inbox[id] = inbox[id]
+        else
+            inbox[id] = nil
         end
     end
 end
@@ -265,67 +282,79 @@ local function create_main_screen(switch_confirm_screen)
         end
     end
 
-    local DT_TARGET_POS = dynamic_text().create(1, 1, function()
-        local tgt, tgt_x, tgt_y, tgt_z = "None", "--", "--", "--"
-        if current_target then
-            tgt = current_target[1]
-            tgt_x = tostring(round(current_target[2]))
-            tgt_y = tostring(round(current_target[3]))
-            tgt_z = tostring(round(current_target[4]))
-        end
-        return
-            tgt .. "\n" ..
-            "X:" .. tgt_x .. "\n" ..
-            "Y:" .. tgt_y .. "\n" ..
-            "Z:" .. tgt_z .. "\n"
+    local DT_TARGET_NAME = dynamic_text().create(1, 1, function()
+        local name = current_target and current_target.name or "None"
+        return center_string("\xAB" .. name .. "\xBB", SCREEN_WIDTH)
     end)
 
-    -- TODO: implement
-    local DT_DELTA_POS = dynamic_text().create(9, 2, function()
+    local DT_DISTANCE = dynamic_text().create(10, 2, function()
+        local d = "--"
+        if current_target then
+            d = string.format("%-4s", round(plane.dist))
+        end
+        return "\x18" .. d
+    end)
+
+    local DT_TARGET_POS = dynamic_text().create(1, 3, function()
+        local function format_num(num, left)
+            left = left and "-" or ""
+            return string.format("%" .. left .. "5s", round(num))
+        end
+        local tx, ty, tz = "   --", "   --", "   --"
         local dx, dy, dz = "--", "--", "--"
         if current_target then
-            dx = tostring(round(1000))
-            dy = tostring(round(1001))
-            dz = tostring(round(1002))
+            tx = format_num(current_target.x)
+            ty = format_num(current_target.y)
+            tz = format_num(current_target.z)
+            dx = format_num(plane.dx, true)
+            dy = format_num(plane.dy, true)
+            dz = format_num(plane.dz, true)
         end
         return
-            "dX:" .. dx .. "\n" ..
-            "dY:" .. dy .. "\n" ..
-            "dZ:" .. dz .. "\n"
+            "X: " .. tx .. " " .. "\x1E" .. dx .. "\n" ..
+            "Y: " .. ty .. " " .. "\x1E" .. dy .. "\n" ..
+            "Z: " .. tz .. " " .. "\x1E" .. dz
     end)
 
-    -- TODO: implement
-    local DT_DELTA_ORIENTATION = dynamic_text().create(1, 5, function()
-        local dpitch, dyaw = "--", "--"
+    local DT_ORIENTATION = dynamic_text().create(1, 6, function()
+        local function format_num(num, left)
+            left = left and "-" or ""
+            return string.format("%" .. left .. "4s", round(num) .. "\xB0")
+        end
+        local tyaw, tpitch = " -- ", " -- "
+        local dyaw, dpitch = "--", "--"
         if current_target then
-            dpitch = tostring(round(10))
-            dyaw = tostring(round(50))
+            tyaw = format_num(plane.tyaw)
+            tpitch = format_num(plane.tpitch)
+            dyaw = format_num(plane.dyaw, true)
+            dpitch = format_num(plane.dpitch, true)
         end
         return
-            "dPt: " .. dpitch .. "\xB0\n" ..
-            "dYw: " .. dyaw .. "\xB0\n"
+            "YAW: " .. tyaw .. "" .. "\x1E" .. dyaw .. "\n" ..
+            "PTC: " .. tpitch .. "" .. "\x1E" .. dpitch
     end)
 
-    -- TODO: implement
-    local ARRIVAL_INFO = dynamic_text().create(1, 7, function()
-        -- speed should probably be an average
-        local speed, eta
+    local ARRIVAL_INFO = dynamic_text().create(1, 8, function()
+        local formatted_speed, formatted_eta = " --", " --"
         if current_target then
-            speed = tostring(round(80))
-            eta = round(100) .. "s"
+            formatted_speed = string.format("%3s", round(plane.speed))
+            local time = plane.eta and format_time(round(plane.eta)) or "NaN"
+            formatted_eta = string.format("%4s", time)
         end
         return
-            "SPD: " .. speed .. "\n" ..
-            "ETA: " .. eta .. "\n"
+            "SPD: " .. formatted_speed .. "\n" ..
+            "ETA: " .. formatted_eta
     end)
 
+    local BTN_REMOVE = button().create(1, 2, "[RMV]", switch_confirm_screen, colours.red)
     local BTN_PREVIOUS = button().create(1, 10, "[PRV]", switch_previous_target)
     local BTN_NEXT = button().create(11, 10, "[NXT]", switch_next_target)
-    local BTN_REMOVE = button().create(11, 1, "[RMV]", switch_confirm_screen, colours.red)
 
     return screen().create({
-        DT_TARGET_POS, DT_DELTA_POS, BTN_REMOVE,
-        DT_DELTA_ORIENTATION,
+        DT_TARGET_NAME, BTN_REMOVE,
+        DT_DISTANCE,
+        DT_TARGET_POS,
+        DT_ORIENTATION,
         ARRIVAL_INFO,
         BTN_PREVIOUS, BTN_NEXT,
     })
@@ -350,7 +379,7 @@ local function create_remove_confirmation_screen(switch_main_screen)
 
     local ST_QUESTION_TEXT = static_text().create(1, 3, center_string("Remove target?", SCREEN_WIDTH))
     local DT_TEXT = dynamic_text().create(1, 4, function()
-        local text = current_target and current_target[1] or "No targets left"
+        local text = current_target and "\xAB" .. current_target.name .. "\xBB" or "No targets left"
         return center_string(text, SCREEN_WIDTH)
     end)
 
@@ -398,19 +427,111 @@ end
     STATE
 ]]
 
-local function update_information()
-
+local function update_current_target()
+    if current_target then
+        for _, target in ipairs(targets) do
+            if target.name == current_target.name then
+                current_target = target
+                return
+            end
+        end
+        current_target = #targets > 0 and targets[1] or nil
+    elseif #targets > 0 then
+        current_target = targets[1]
+    end
 end
 
-local function update_state()
+local function update_information()
+    local position = ship.getWorldspacePosition()
+    local velocity = ship.getVelocity()
+
+    -- Position
+    plane.x = position.x
+    plane.y = position.y
+    plane.z = position.z
+    -- Velocity
+    plane.vx = velocity.x
+    plane.vy = velocity.y
+    plane.vz = velocity.z
+
+    plane.yaw = math.deg(ship.getYaw())
+    plane.pitch = math.deg(ship.getPitch())
+    plane.roll = math.deg(ship.getRoll())
+
+    plane.speed = math.sqrt(plane.vx ^ 2 + plane.vy ^ 2 + plane.vz ^ 2)
+    plane.max_speed = math.max(plane.speed, plane.max_speed)
+
+    if current_target then
+        plane.dx = current_target.x - position.x
+        plane.dy = current_target.y - position.y
+        plane.dz = current_target.z - position.z
+
+        plane.dist = math.sqrt(plane.dx ^ 2 + plane.dy ^ 2 + plane.dz ^ 2)
+
+        plane.tyaw = math.deg(math.atan2(plane.dz, plane.dx))
+        plane.tyaw = (plane.tyaw + 360) % 360
+        plane.tpitch = math.deg(math.atan2(plane.dy, math.sqrt(plane.dx ^ 2 + plane.dz ^ 2)))
+
+        plane.dyaw = plane.tyaw - plane.yaw
+        plane.dpitch = plane.tpitch - plane.pitch
+
+        plane.eta = plane.dist / (plane.speed ~= 0 and plane.speed or nil)
+    end
+
+    if MODEM then
+        if inbox[DESIGNATOR_ID] and inbox[DESIGNATOR_ID]["target_info"] then
+            local new_target = inbox[DESIGNATOR_ID]["target_info"]
+            if type(new_target.name) == "string" and
+                type(new_target.x) == "number" and
+                type(new_target.y) == "number" and
+                type(new_target.z) == "number"
+            then
+                new_target.x = round(new_target.x)
+                new_target.y = round(new_target.y)
+                new_target.z = round(new_target.z)
+
+                local existing_index = nil
+                for i, target in ipairs(targets) do
+                    if target.name == new_target.name then
+                        existing_index = i
+                        break
+                    end
+                end
+
+                if existing_index then
+                    targets[existing_index] = new_target
+                else
+                    table.insert(targets, new_target)
+                end
+            end
+
+            update_current_target()
+        end
+    end
+end
+
+local function main()
     while true do
         -- TEST: REMOVE LATER
         ship.run(DELTA_TICK)
 
+        clear_disconnected_ids()
         update_information()
+
+        if MODEM and current_target then
+            outgoing_message["info"] = {
+                distance = round(plane.dist),
+                yaw = round(plane.tyaw),
+                pitch = round(plane.tpitch)
+            }
+
+            print("sending")
+            MODEM.transmit(OUTGOING_CHANNEL, INCOMING_CHANNEL, outgoing_message)
+        end
+
         current_time = current_time + DELTA_TICK
         sleep(DELTA_TICK / 20)
     end
 end
 
-parallel.waitForAll(update_state, HUD_displayer, input_handler, message_handler)
+parallel.waitForAll(main, HUD_displayer, input_handler, message_handler)

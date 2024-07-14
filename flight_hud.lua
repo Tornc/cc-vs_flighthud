@@ -92,7 +92,6 @@ for _, v in pairs(SOUNDS) do
     last_played[v[1]] = 0
 end
 local inbox, old_inbox = {}, {}
-local outgoing_message = { MY_ID }
 
 --[[
     UTIL
@@ -133,7 +132,7 @@ local function message_handler()
     print("Modem attached.")
     MODEM.open(INCOMING_CHANNEL)
     while true do
-        local channel, incoming_message
+        local _, _, channel, _, incoming_message, _
         repeat
             _, _, channel, _, incoming_message, _ = os.pullEvent("modem_message")
         until channel == INCOMING_CHANNEL
@@ -141,14 +140,15 @@ local function message_handler()
         if incoming_message["id"] ~= nil then
             inbox[incoming_message["id"]] = incoming_message
         end
+    end
+end
 
-        -- Clear disconnected IDs
-        for id, _ in pairs(inbox) do
-            if inbox[id] ~= old_inbox[id] then
-                old_inbox[id] = inbox[id]
-            else
-                inbox[id] = nil
-            end
+local function clear_disconnected_ids()
+    for id, _ in pairs(inbox) do
+        if inbox[id] ~= old_inbox[id] then
+            old_inbox[id] = inbox[id]
+        else
+            inbox[id] = nil
         end
     end
 end
@@ -458,8 +458,8 @@ local function update_information()
     local position = ship.getWorldspacePosition()
     local velocity = ship.getVelocity()
     local omega = ship.getOmega()
-    local dt = DELTA_TICK / 20
 
+    local dt = DELTA_TICK / 20
     -- Linear acceleration
     local linear_ax = (velocity.x - plane.vx) / dt
     local linear_ay = (velocity.y - plane.vy) / dt
@@ -519,23 +519,39 @@ local function update_information()
         plane.descending = round(plane.vy, 1) < 0
     end
 
+    print(0)
     if MODEM then
-        -- TOOD: Process inbox
+        print(1)
+        print(inbox[WSO_ID])
+        if inbox[WSO_ID] and inbox[WSO_ID]["info"] then
+            print(2)
+            local info = inbox[WSO_ID]["info"]
+
+            if type(info.distance) == "number" and
+                type(info.yaw) == "number" and
+                type(info.pitch) == "number" then
+
+                    print(3)
+
+                print(info.distance, info.yaw, info.pitch)
+            end
+        end
     end
 end
 
-local function update_state()
+local function main()
     while true do
         -- TEST: REMOVE LATER
         ship.run(DELTA_TICK)
 
+        clear_disconnected_ids()
         update_information()
         current_time = current_time + DELTA_TICK
         sleep(DELTA_TICK / 20)
     end
 end
 
-parallel.waitForAll(update_state, hud_displayer, sound_player, message_handler)
+parallel.waitForAll(main, hud_displayer, sound_player, message_handler)
 
 -- 1x1 monitor resolution is only 7x4 💀
 -- 1x1 monitor resolution at 0.5 scale is 15x10
