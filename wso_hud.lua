@@ -2,6 +2,7 @@
 local ship = require("fake_ShipAPI")
 periphemu.create("front", "monitor")
 periphemu.create("top", "modem")
+local pretty = require "cc.pretty"
 
 --[[
     PERIPHERALS
@@ -57,12 +58,12 @@ local plane = {
     eta = 0, -- Time of arrival in seconds
 }
 local inbox, old_inbox = {}, {}
-local outgoing_message = { MY_ID }
+local outgoing_message = { ["id"] = MY_ID }
 local targets = {}
 local current_target
 -- TEST: remove later
 targets = {
-    { name = "alpha",      x = 1000, y = 0,   z = 0 },
+    { name = "alpha",      x = 1000, y = 0,   z = 1000 },
     { name = "bravo",      x = 2500, y = 200, z = 2500 },
     { name = "charlie123", x = 86,   y = -10, z = -340 },
 }
@@ -525,7 +526,6 @@ local function main()
                 pitch = round(plane.tpitch)
             }
 
-            print("sending")
             MODEM.transmit(OUTGOING_CHANNEL, INCOMING_CHANNEL, outgoing_message)
         end
 

@@ -5,6 +5,7 @@ local ship = require("fake_ShipAPI")
 periphemu.create("front", "monitor")
 periphemu.create("back", "speaker")
 periphemu.create("top", "modem")
+local pretty = require "cc.pretty"
 
 --[[
     MODULES
@@ -37,6 +38,7 @@ local SOUNDS = {                             -- Format: "FILE_NAME", sound coold
     over_g_warning = { "OVER_G", 100 },
     hit_warning = { "WARNING", 60 }, -- Look, I don't have a better system other than mass to detect damage
 }
+local TARGET_NEARBY_THRESHOLD = 150  -- Only useful if you have a WSO
 local HUD_BACKGROUND_COLOUR = 0x000000
 local HUD_TEXT_COLOUR = 0x00FF00
 
@@ -86,6 +88,10 @@ local plane = {
     got_hit = false,
     has_taken_off = false,
     descending = false,
+
+    tgt_distance = 0, -- WSO information
+    tgt_yaw = 0,
+    tgt_pitch = 0,
 }
 local last_played = {}
 for _, v in pairs(SOUNDS) do
@@ -263,8 +269,10 @@ end
 -- Consider this function as copied from Endal
 local function draw_heading()
     -- Outer arrows, draw on strip level
-    write_at(1, 2, "\xAB")
-    write_at(SCREEN_WIDTH, 2, "\xBB")
+    local heading_colour = (inbox[WSO_ID] and plane.tgt_distance <= TARGET_NEARBY_THRESHOLD)
+        and colours.red or nil
+    write_at(1, 2, "\xAB", heading_colour)
+    write_at(SCREEN_WIDTH, 2, "\xBB", heading_colour)
 
     local yaw_offset = math.floor(plane.yaw / 10 + 0.5)
     local adjustment = 2
@@ -273,24 +281,27 @@ local function draw_heading()
         write_at(
             x,
             2,
-            (i + yaw_offset) % 3 == 0 and "|" or ","
+            (i + yaw_offset) % 3 == 0 and "|" or ",",
+            heading_colour
         )
         if DIRECTIONS[(i + yaw_offset - 6) % 36 / 9 + 1] then
             -- N = 0, E = 9, S = 18, W = 27 --> N = 1, E = 2, S = 3, W = 4
             write_at(
                 x,
                 1,
-                DIRECTIONS[(i + yaw_offset - 6) % 36 / 9 + 1]
+                DIRECTIONS[(i + yaw_offset - 6) % 36 / 9 + 1],
+                heading_colour
             )
         end
     end
 
     -- Display the yaw top-mid
     local string_formatted_yaw = string.format("%03d", plane.yaw)
-    write_at(math.floor(SCREEN_WIDTH / 2), 1, string_formatted_yaw)
+    write_at(math.floor(SCREEN_WIDTH / 2), 1, string_formatted_yaw, heading_colour)
 
+    -- TODO: make the marker move too, according to the target's yaw
     -- Display the arrow bottom-mid
-    write_at(math.floor(SCREEN_WIDTH / 2 + 0.5), 3, "\x1E")
+    write_at(math.floor(SCREEN_WIDTH / 2 + 0.5), 3, "\x1E", heading_colour)
 end
 
 local function draw_altitude()
@@ -390,6 +401,7 @@ local function center_display()
         plot_line(x1, y1, x2, y2)
     end
 
+    -- TODO: figure out what kind of marker should be used to indicate target pitch
     function self.draw_pitch_ladder()
         for _, pitch in pairs(self.pitch_values) do
             local y_offset = math.floor(-pitch / 20) * self.ladder_spacing
@@ -412,8 +424,8 @@ local function center_display()
             math.max(self.min_y, math.min(y, self.max_y - 1))
     end
 
-    self.draw_ladder_line = function(x, y, char, pitch)
-        -- LATER: stupid hack, otherwise the ladder will draw too low
+    function self.draw_ladder_line(x, y, char, pitch)
+        -- LATER: stupid inconsistency, otherwise the ladder will draw too low
         -- but if not >= then it will draw not high enough
         if y >= self.min_y and y < self.max_y then
             write_at(x, y, char)
@@ -519,21 +531,15 @@ local function update_information()
         plane.descending = round(plane.vy, 1) < 0
     end
 
-    print(0)
     if MODEM then
-        print(1)
-        print(inbox[WSO_ID])
         if inbox[WSO_ID] and inbox[WSO_ID]["info"] then
-            print(2)
             local info = inbox[WSO_ID]["info"]
-
             if type(info.distance) == "number" and
                 type(info.yaw) == "number" and
                 type(info.pitch) == "number" then
-
-                    print(3)
-
-                print(info.distance, info.yaw, info.pitch)
+                plane.tgt_distance = info.distance
+                plane.tgt_yaw = info.yaw
+                plane.tgt_pitch = info.pitch
             end
         end
     end
@@ -557,7 +563,6 @@ parallel.waitForAll(main, hud_displayer, sound_player, message_handler)
 -- 1x1 monitor resolution at 0.5 scale is 15x10
 
 -- Priority: WSO features
--- Colouring the « » in a different colour when you are within like 100-150 blocks
 -- Add a yaw and pitch marker where the target is
 --      The upwards triangle could be the thing that gets moved. (indicates dYaw)
 --      Not sure what kind of pitch marker could be used
