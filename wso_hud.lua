@@ -63,9 +63,9 @@ local targets = {}
 local current_target
 -- TEST: remove later
 targets = {
-    { name = "alpha",      x = 1000, y = 0,   z = 1000 },
-    { name = "bravo",      x = 2500, y = 200, z = 2500 },
-    { name = "charlie123", x = 86,   y = -10, z = -340 },
+    { name = "alpha",   x = 1000, y = 0,    z = 1000 },
+    { name = "bravo",   x = 3000, y = -500, z = 0 },
+    { name = "charlie", x = 5000, y = 2500, z = -340 },
 }
 local mouse_x, mouse_y = 0, 0
 
@@ -285,6 +285,8 @@ local function create_main_screen(switch_confirm_screen)
 
     local DT_TARGET_NAME = dynamic_text().create(1, 1, function()
         local name = current_target and current_target.name or "None"
+        local max_name_length = 13
+        name = string.sub(name, 1, max_name_length)
         return center_string("\xAB" .. name .. "\xBB", SCREEN_WIDTH)
     end)
 

@@ -98,6 +98,7 @@ for _, v in pairs(SOUNDS) do
     last_played[v[1]] = 0
 end
 local inbox, old_inbox = {}, {}
+local wso_is_valid = false
 
 --[[
     UTIL
@@ -269,7 +270,7 @@ end
 -- Consider this function as copied from Endal
 local function draw_heading()
     -- Outer arrows, draw on strip level
-    local heading_colour = (inbox[WSO_ID] and plane.tgt_distance <= TARGET_NEARBY_THRESHOLD)
+    local heading_colour = ((MODEM and wso_is_valid) and plane.tgt_distance <= TARGET_NEARBY_THRESHOLD)
         and colours.red or nil
     write_at(1, 2, "\xAB", heading_colour)
     write_at(SCREEN_WIDTH, 2, "\xBB", heading_colour)
@@ -299,9 +300,30 @@ local function draw_heading()
     local string_formatted_yaw = string.format("%03d", plane.yaw)
     write_at(math.floor(SCREEN_WIDTH / 2), 1, string_formatted_yaw, heading_colour)
 
-    -- TODO: make the marker move too, according to the target's yaw
-    -- Display the arrow bottom-mid
-    write_at(math.floor(SCREEN_WIDTH / 2 + 0.5), 3, "\x1E", heading_colour)
+    local marker_position, marker_symbol
+    if MODEM and wso_is_valid then
+        -- Display the marker according to the target yaw
+        local yaw_difference = (plane.tgt_yaw - plane.yaw + 180) % 360 - 180
+        local ideal_position = math.floor(SCREEN_WIDTH / 2 + yaw_difference / 10 + 0.5)
+
+        local min_x = 3
+        local max_x = SCREEN_WIDTH - 1
+
+        marker_position = math.max(min_x, math.min(max_x, ideal_position))
+        if marker_position == min_x and ideal_position < min_x then
+            marker_symbol = "\x1B" -- Left arrow
+        elseif marker_position == max_x and ideal_position > max_x then
+            marker_symbol = "\x1A" -- Right arrow
+        else
+            marker_symbol = "\x18" -- Up arrow
+        end
+    else
+        -- Display the marker bottom-mid
+        marker_position = math.floor(SCREEN_WIDTH / 2 + 0.5)
+        marker_symbol = "\x1E" -- Up triangle
+    end
+
+    write_at(marker_position, 3, marker_symbol, heading_colour)
 end
 
 local function draw_altitude()
@@ -401,9 +423,8 @@ local function center_display()
         plot_line(x1, y1, x2, y2)
     end
 
-    -- TODO: figure out what kind of marker should be used to indicate target pitch
     function self.draw_pitch_ladder()
-        for _, pitch in pairs(self.pitch_values) do
+        for _, pitch in ipairs(self.pitch_values) do
             local y_offset = math.floor(-pitch / 20) * self.ladder_spacing
             local ladder_y = self.horizon_y + y_offset + 1
             local char = pitch > 0 and "\xAF" or "_"
@@ -411,6 +432,16 @@ local function center_display()
             -- Left and right side
             self.draw_ladder_line(self.center_x - 2, ladder_y, char)
             self.draw_ladder_line(self.center_x + 2, ladder_y, char, pitch)
+        end
+
+        if wso_is_valid then
+            local target_y = self.horizon_y - math.floor(plane.tgt_pitch / 20) * self.ladder_spacing + 1
+
+            -- Clamp the marker position to the visible area
+            target_y = math.max(self.min_y, math.min(target_y, self.max_y - 1))
+
+            -- Draw the marker
+            self.draw_ladder_line(self.center_x - 2, target_y, "\xBB")
         end
     end
 
@@ -532,7 +563,8 @@ local function update_information()
     end
 
     if MODEM then
-        if inbox[WSO_ID] and inbox[WSO_ID]["info"] then
+        wso_is_valid = false
+        if inbox[WSO_ID] and type(inbox[WSO_ID]["info"]) == 'table' then
             local info = inbox[WSO_ID]["info"]
             if type(info.distance) == "number" and
                 type(info.yaw) == "number" and
@@ -540,6 +572,7 @@ local function update_information()
                 plane.tgt_distance = info.distance
                 plane.tgt_yaw = info.yaw
                 plane.tgt_pitch = info.pitch
+                wso_is_valid = true
             end
         end
     end
@@ -562,10 +595,7 @@ parallel.waitForAll(main, hud_displayer, sound_player, message_handler)
 -- 1x1 monitor resolution is only 7x4 💀
 -- 1x1 monitor resolution at 0.5 scale is 15x10
 
--- Priority: WSO features
--- Add a yaw and pitch marker where the target is
---      The upwards triangle could be the thing that gets moved. (indicates dYaw)
---      Not sure what kind of pitch marker could be used
+-- TODO: ✨ E N C R Y P T I O N ✨
 -- TODO: swap over to os.time()
 
 -- Priority: bugfixing (end it all)
