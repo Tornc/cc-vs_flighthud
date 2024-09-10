@@ -33,25 +33,16 @@ local SCREEN_WIDTH, SCREEN_HEIGHT = 15, 10
 
 local current_time = 0
 local plane = {
-    x = 0, -- Position
-    y = 0,
-    z = 0,
-    vx = 0, -- Velocity
-    vy = 0,
-    vz = 0,
-    yaw = 0, -- Orientation
-    pitch = 0,
-    roll = 0,
+    pos = vector.new(0, 0, 0),  -- Position
+    vel = vector.new(0, 0, 0),  -- Velocity
+    ori = vector.new(0, 0, 0),  -- Orientation: x = pitch, y = yaw, z = roll
+    dpos = vector.new(0, 0, 0), -- Difference in XYZ between plane and target
 
     speed = 0,
     max_speed = 0,
 
-    dx = 0, -- Distance to target
-    dy = 0,
-    dz = 0,
-    dist = 0,
-    tyaw = 0,   -- Yaw and pitch required
-    tpitch = 0, -- to face the target
+    tyaw = 0, -- Yaw and pitch required to face the target
+    tpitch = 0,
     dyaw = 0,
     dpitch = 0,
 
@@ -63,9 +54,9 @@ local targets = {}
 local current_target
 -- TEST: remove later
 targets = {
-    { name = "alpha",   x = 1000, y = 0,    z = 1000 },
-    { name = "bravo",   x = 3000, y = -500, z = 0 },
-    { name = "charlie", x = 5000, y = 2500, z = -340 },
+    { name = "alpha",   pos = vector.new(1000, 0, 1000) },
+    { name = "bravo",   pos = vector.new(3000, -500, 0) },
+    { name = "charlie", pos = vector.new(5000, 2500, -340) },
 }
 local mouse_x, mouse_y = 0, 0
 
@@ -252,7 +243,7 @@ local function screen()
 end
 
 local function create_main_screen(switch_confirm_screen)
-    local function switch_previous_target()
+    local function switch_target(offset)
         if #targets > 0 then
             local current_index = 1
             for i, target in ipairs(targets) do
@@ -261,23 +252,17 @@ local function create_main_screen(switch_confirm_screen)
                     break
                 end
             end
-            current_index = (current_index - 2) % #targets + 1
+            current_index = (current_index - 1 + offset) % #targets + 1
             current_target = targets[current_index]
         end
     end
 
+    local function switch_previous_target()
+        switch_target(-1)
+    end
+
     local function switch_next_target()
-        if #targets > 0 then
-            local current_index = 1
-            for i, target in ipairs(targets) do
-                if target == current_target then
-                    current_index = i
-                    break
-                end
-            end
-            current_index = current_index % #targets + 1
-            current_target = targets[current_index]
-        end
+        switch_target(1)
     end
 
     local DT_TARGET_NAME = dynamic_text().create(1, 1, function()
@@ -290,7 +275,7 @@ local function create_main_screen(switch_confirm_screen)
     local DT_DISTANCE = dynamic_text().create(10, 2, function()
         local d = "--"
         if current_target then
-            d = string.format("%-4s", round(plane.dist))
+            d = string.format("%-4s", round(plane.dpos:length()))
         end
         return "\x18" .. d
     end)
@@ -303,12 +288,12 @@ local function create_main_screen(switch_confirm_screen)
         local tx, ty, tz = "   --", "   --", "   --"
         local dx, dy, dz = "--", "--", "--"
         if current_target then
-            tx = format_num(current_target.x)
-            ty = format_num(current_target.y)
-            tz = format_num(current_target.z)
-            dx = format_num(plane.dx, true)
-            dy = format_num(plane.dy, true)
-            dz = format_num(plane.dz, true)
+            tx = format_num(current_target.pos.x)
+            ty = format_num(current_target.pos.y)
+            tz = format_num(current_target.pos.z)
+            dx = format_num(plane.dpos.x, true)
+            dy = format_num(plane.dpos.y, true)
+            dz = format_num(plane.dpos.z, true)
         end
         return
             "X: " .. tx .. " " .. "\x1E" .. dx .. "\n" ..
@@ -446,49 +431,45 @@ local function update_information()
     local velocity = ship.getVelocity()
 
     -- Position
-    plane.x = position.x
-    plane.y = position.y
-    plane.z = position.z
+    plane.pos.x = position.x
+    plane.pos.y = position.y
+    plane.pos.z = position.z
     -- Velocity
-    plane.vx = velocity.x
-    plane.vy = velocity.y
-    plane.vz = velocity.z
+    plane.vel.x = velocity.x
+    plane.vel.y = velocity.y
+    plane.vel.z = velocity.z
 
-    plane.yaw = math.deg(ship.getYaw())
-    plane.pitch = math.deg(ship.getPitch())
-    plane.roll = math.deg(ship.getRoll())
+    plane.ori.x = math.deg(ship.getPitch())
+    plane.ori.y = math.deg(ship.getYaw())
+    plane.ori.z = math.deg(ship.getRoll())
 
-    plane.speed = math.sqrt(plane.vx ^ 2 + plane.vy ^ 2 + plane.vz ^ 2)
+    plane.speed = plane.vel:length()
     plane.max_speed = math.max(plane.speed, plane.max_speed)
 
     if current_target then
-        plane.dx = current_target.x - position.x
-        plane.dy = current_target.y - position.y
-        plane.dz = current_target.z - position.z
+        plane.dpos = current_target.pos - plane.pos
 
-        plane.dist = math.sqrt(plane.dx ^ 2 + plane.dy ^ 2 + plane.dz ^ 2)
-
-        plane.tyaw = math.deg(math.atan2(plane.dz, plane.dx))
+        plane.tyaw = math.deg(math.atan2(plane.dpos.z, plane.dpos.x))
         plane.tyaw = (plane.tyaw + 360) % 360
-        plane.tpitch = math.deg(math.atan2(plane.dy, math.sqrt(plane.dx ^ 2 + plane.dz ^ 2)))
+        plane.tpitch = math.deg(math.atan2(plane.dpos.y, math.sqrt(plane.dpos.x ^ 2 + plane.dpos.z ^ 2)))
 
-        plane.dyaw = plane.tyaw - plane.yaw
-        plane.dpitch = plane.tpitch - plane.pitch
+        plane.dyaw = plane.tyaw - plane.ori.y
+        plane.dpitch = plane.tpitch - plane.ori.x
 
-        plane.eta = plane.dist / (plane.speed ~= 0 and plane.speed or nil)
+        plane.eta = plane.dpos:length() / (plane.speed ~= 0 and plane.speed or nil)
     end
 
     if MODEM then
         if inbox[DESIGNATOR_ID] and inbox[DESIGNATOR_ID]["target_info"] then
-            local new_target = inbox[DESIGNATOR_ID]["target_info"]
-            if type(new_target.name) == "string" and
-                type(new_target.x) == "number" and
-                type(new_target.y) == "number" and
-                type(new_target.z) == "number"
+            local target_info = inbox[DESIGNATOR_ID]["target_info"]
+            if type(target_info.name) == "string" and
+                type(target_info.x) == "number" and
+                type(target_info.y) == "number" and
+                type(target_info.z) == "number"
             then
-                new_target.x = round(new_target.x)
-                new_target.y = round(new_target.y)
-                new_target.z = round(new_target.z)
+                local new_target = {}
+                new_target.name = target_info.name
+                new_target.pos = vector.new(round(target_info.x), round(target_info.y), round(target_info.z))
 
                 local existing_index = nil
                 for i, target in ipairs(targets) do
@@ -520,7 +501,7 @@ local function main()
 
         if MODEM and current_target then
             outgoing_message["info"] = {
-                distance = round(plane.dist),
+                distance = round(plane.dpos:length()),
                 yaw = round(plane.tyaw),
                 pitch = round(plane.tpitch)
             }
@@ -537,5 +518,5 @@ parallel.waitForAll(main, HUD_displayer, input_handler, message_handler)
 
 -- TODO: instead of sending dist, tyaw and tpitch, just send txyz every n seconds.
 -- this will reduce the times required for sending encrypted messages (expensive)
--- make the pilot hud calculate it instead. The target info should expire after 
+-- make the pilot hud calculate it instead. The target info should expire after
 -- m seconds (more than n seconds by a decent margin I think)
