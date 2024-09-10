@@ -5,7 +5,7 @@ local ship = require("fake_ShipAPI")
 periphemu.create("front", "monitor")
 periphemu.create("back", "speaker")
 periphemu.create("top", "modem")
-local pretty = require "cc.pretty"
+local pretty = require("cc.pretty")
 
 --[[
     MODULES
@@ -277,7 +277,7 @@ local function draw_heading()
 
     local yaw_offset = math.floor(plane.yaw / 10 + 0.5)
     local adjustment = 2
-    for i = 0, SCREEN_WIDTH - 2 * adjustment + 1, 1 do
+    for i = 0, SCREEN_WIDTH - 2 * adjustment + 1 do
         local x = i + adjustment
         write_at(
             x,
@@ -424,7 +424,7 @@ local function center_display()
     end
 
     function self.draw_pitch_ladder()
-        for _, pitch in ipairs(self.pitch_values) do
+        for _, pitch in pairs(self.pitch_values) do
             local y_offset = math.floor(-pitch / 20) * self.ladder_spacing
             local ladder_y = self.horizon_y + y_offset + 1
             local char = pitch > 0 and "\xAF" or "_"
@@ -481,6 +481,7 @@ local function hud_displayer()
     MONITOR.setPaletteColour(colours.lime, HUD_TEXT_COLOUR)
     MONITOR.setTextColour(colours.lime)
     local CENTER_DISPLAY = center_display()
+
     while true do
         MONITOR.clear()
 
@@ -513,7 +514,7 @@ local function update_information()
     local angular_az = (omega.z - plane.o_z) / dt
 
     local combined_ax = linear_ax + angular_ax
-    local combined_ay = linear_ay + angular_ay
+    local combined_ay = linear_ay + angular_ay - GRAVITY
     local combined_az = linear_az + angular_az
 
     plane.ax = combined_ax
@@ -585,7 +586,7 @@ local function main()
 
         clear_disconnected_ids()
         update_information()
-        current_time = current_time + DELTA_TICK
+        current_time = round(os.epoch("utc") * 0.02) -- Convert milliseconds to ticks
         sleep(DELTA_TICK / 20)
     end
 end
@@ -596,21 +597,16 @@ parallel.waitForAll(main, hud_displayer, sound_player, message_handler)
 -- 1x1 monitor resolution at 0.5 scale is 15x10
 
 -- TODO: ✨ E N C R Y P T I O N ✨
--- TODO: swap over to os.time()
 
 -- Priority: bugfixing (end it all)
--- TODO: pitch is actually roll if you assemble it in a weird direction --> invert option?
--- TODO: check if this is also valid for roll.
--- TODO: invert pitch if you're upside down? (roll)
+-- TODO: NSEW assembly roll/pitch inversion arguments
+-- TODO: negative G-force
+--      Convert as many things to cc vectors as possible.
 
 -- Priority: new features planned
--- TODO: if you lose mass (get hit), make the hud flash
--- TODO: make the + move (maybe change it), to be the total velocity vector/flight path vector
 -- TODO: split the horizon into 2 lines, like huds irl (2x3 I'm thinking --> width//2 -1)
 -- TODO: figure out turtles, they allow for more compactness (3 periph slots, takes up 0 space)
 
 -- Priority: procrastination
--- fix clutter / colours
--- add the bluetooth voice easter egg (ready to pair + connected succesfully)
 -- add comments and clean stuff up
 -- make a better setup video which actually fucking shows files dragging in

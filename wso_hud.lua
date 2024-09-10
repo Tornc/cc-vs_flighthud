@@ -2,7 +2,7 @@
 local ship = require("fake_ShipAPI")
 periphemu.create("front", "monitor")
 periphemu.create("top", "modem")
-local pretty = require "cc.pretty"
+local pretty = require("cc.pretty")
 
 --[[
     PERIPHERALS
@@ -134,6 +134,7 @@ end
 --[[
     USER INPUT
 ]]
+
 local function input_handler()
     if not MONITOR then return end
     while true do
@@ -153,7 +154,7 @@ local function write_at(x, y, text, colour)
     MONITOR.setTextColour(previous_colour)
 end
 
-local function ui_element()
+local function static_text()
     local self = setmetatable({}, {})
 
     function self.create(x, y, text, colour)
@@ -186,12 +187,8 @@ local function ui_element()
     return self
 end
 
-local function static_text()
-    return ui_element()
-end
-
 local function dynamic_text()
-    local self = ui_element()
+    local self = static_text()
     local super_create = self.create
 
     function self.create(x, y, variable_ref, colour)
@@ -215,7 +212,7 @@ local function dynamic_text()
 end
 
 local function button()
-    local self = ui_element()
+    local self = static_text()
     local super_create = self.create
 
     function self.create(x, y, text, action, colour)
@@ -337,7 +334,7 @@ local function create_main_screen(switch_confirm_screen)
             "PTC: " .. tpitch .. "" .. "\x1E" .. dpitch
     end)
 
-    local ARRIVAL_INFO = dynamic_text().create(1, 8, function()
+    local DT_ARRIVAL_INFO = dynamic_text().create(1, 8, function()
         local formatted_speed, formatted_eta = " --", " --"
         if current_target then
             formatted_speed = string.format("%3s", round(plane.speed))
@@ -358,7 +355,7 @@ local function create_main_screen(switch_confirm_screen)
         DT_DISTANCE,
         DT_TARGET_POS,
         DT_ORIENTATION,
-        ARRIVAL_INFO,
+        DT_ARRIVAL_INFO,
         BTN_PREVIOUS, BTN_NEXT,
     })
 end
@@ -531,9 +528,14 @@ local function main()
             MODEM.transmit(OUTGOING_CHANNEL, INCOMING_CHANNEL, outgoing_message)
         end
 
-        current_time = current_time + DELTA_TICK
+        current_time = round(os.epoch("utc") * 0.02) -- Convert milliseconds to ticks
         sleep(DELTA_TICK / 20)
     end
 end
 
 parallel.waitForAll(main, HUD_displayer, input_handler, message_handler)
+
+-- TODO: instead of sending dist, tyaw and tpitch, just send txyz every n seconds.
+-- this will reduce the times required for sending encrypted messages (expensive)
+-- make the pilot hud calculate it instead. The target info should expire after 
+-- m seconds (more than n seconds by a decent margin I think)
