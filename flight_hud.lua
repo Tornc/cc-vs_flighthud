@@ -50,9 +50,9 @@ local WSO_ID = "wso_comp"
 local INCOMING_CHANNEL, OUTGOING_CHANNEL = 6060, 6060
 
 -- No need to touch these
-local SCREEN_WIDTH, SCREEN_HEIGHT = 15, 10
+local SCREEN_WIDTH, SCREEN_HEIGHT = 15, 10 -- Minimum is 15 width, 10 height
 local DIRECTIONS = { "N", "E", "S", "W" }
-local GRAVITY = 10 -- m/s (I'm using CBC's gravity value)
+local GRAVITY = 10                         -- m/s (I'm using CBC's gravity value)
 local SOUND_EXTENSION_TYPE = "dfpwm"
 local DECODER = dfpwm.make_decoder()
 
@@ -328,7 +328,7 @@ end
 
 local function draw_altitude()
     local y_offset = 2
-    local strip_length = 7
+    local strip_length = SCREEN_HEIGHT - 3 -- Heading takes up 2y, Alt takes up 1
     -- Every 100 meters is -, every 50 is .
     local rounded_alt = 50 * math.floor(plane.rel_y / 50 + 0.5)
     local is_hundred = rounded_alt % 100 == 0
@@ -352,8 +352,7 @@ end
 
 local function draw_speed()
     local y_offset = 2
-    local strip_length = 7
-
+    local strip_length = SCREEN_HEIGHT - 3 -- Heading takes up 2y, Speed takes up 1
     -- Every 10 m/s is -, every 5 is .
     local rounded_alt = 5 * math.floor(plane.speed / 5 + 0.5)
     local is_ten = rounded_alt % 10 == 0
@@ -379,10 +378,11 @@ end
 
 local function center_display()
     local self = setmetatable({}, {})
-    self.center_x = 8
-    self.center_y = 6
-    self.width = 9
-    self.height = 7
+    self.center_x = round(SCREEN_WIDTH / 2)
+    self.center_y = round(SCREEN_HEIGHT / 2) + 1 -- +1 because heading is 2y, bottom 1y
+    -- These only work in intervals of 2 due to symmetry
+    self.width = SCREEN_WIDTH - 6                -- Width: 4x (spd/alt) + 2x blank,
+    self.height = SCREEN_HEIGHT - 3              -- Height: 2y (heading) + 1 (bottom strip)
 
     self.min_x = self.center_x - math.floor(self.width / 2)
     self.max_x = self.center_x + math.ceil(self.width / 2)
@@ -430,8 +430,8 @@ local function center_display()
             local char = pitch > 0 and "\xAF" or "_"
 
             -- Left and right side
-            self.draw_ladder_line(self.center_x - 2, ladder_y, char)
-            self.draw_ladder_line(self.center_x + 2, ladder_y, char, pitch)
+            self.draw_ladder_line(self.center_x - (2 / 9 * self.width), ladder_y, char)
+            self.draw_ladder_line(self.center_x + (2 / 9 * self.width), ladder_y, char, pitch)
         end
 
         if wso_is_valid then
@@ -581,12 +581,13 @@ end
 
 local function main()
     while true do
+        current_time = round(os.epoch("utc") * 0.02) -- Convert milliseconds to ticks
+
         -- TEST: REMOVE LATER
         ship.run(DELTA_TICK)
 
         clear_disconnected_ids()
         update_information()
-        current_time = round(os.epoch("utc") * 0.02) -- Convert milliseconds to ticks
         sleep(DELTA_TICK / 20)
     end
 end
@@ -600,8 +601,9 @@ parallel.waitForAll(main, hud_displayer, sound_player, message_handler)
 
 -- Priority: bugfixing (end it all)
 -- TODO: NSEW assembly roll/pitch inversion arguments
--- TODO: negative G-force
+-- TODO: Rework G-force (it's completely fucked) + add negative G-force
 --      Convert as many things to cc vectors as possible.
+-- TODO: make hud scalable --> scale values like spd/alt (especially pitch ladder) too.
 
 -- Priority: new features planned
 -- TODO: split the horizon into 2 lines, like huds irl (2x3 I'm thinking --> width//2 -1)

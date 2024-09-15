@@ -493,6 +493,8 @@ end
 
 local function main()
     while true do
+        current_time = round(os.epoch("utc") * 0.02) -- Convert milliseconds to ticks
+
         -- TEST: REMOVE LATER
         ship.run(DELTA_TICK)
 
@@ -509,12 +511,14 @@ local function main()
             MODEM.transmit(OUTGOING_CHANNEL, INCOMING_CHANNEL, outgoing_message)
         end
 
-        current_time = round(os.epoch("utc") * 0.02) -- Convert milliseconds to ticks
         sleep(DELTA_TICK / 20)
     end
 end
 
 parallel.waitForAll(main, HUD_displayer, input_handler, message_handler)
+
+-- TODO: allow for button actions to have parms (...). reorder colour so it's before action. 
+-- Modify every button creation accordingly (add nil)
 
 -- TODO: instead of sending dist, tyaw and tpitch, just send txyz every n seconds.
 -- this will reduce the times required for sending encrypted messages (expensive)
