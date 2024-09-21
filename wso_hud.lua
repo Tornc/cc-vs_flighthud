@@ -64,20 +64,15 @@ local mouse_x, mouse_y = 0, 0
     UTIL
 ]]
 
-local function round(number, decimal)
-    if decimal then
-        local fmt_str = "%." .. decimal .. "f"
-        return tonumber(string.format(fmt_str, number))
-    else
-        return math.floor(number + 0.5)
-    end
-end
-
 local function center_string(string, width)
     local padding = width - #string
     local left_pad = math.floor(padding / 2)
     local right_pad = padding - left_pad
     return string.rep(" ", left_pad) .. string .. string.rep(" ", right_pad)
+end
+
+local function clamp(value, min, max)
+    return math.min(max, math.max(min, value))
 end
 
 local function format_time(seconds)
@@ -89,6 +84,15 @@ local function format_time(seconds)
     else
         local hours = math.floor(seconds / 3600)
         return string.format("%dh", hours)
+    end
+end
+
+local function round(number, decimal)
+    if decimal then
+        local fmt_str = "%." .. decimal .. "f"
+        return tonumber(string.format(fmt_str, number))
+    else
+        return math.floor(number + 0.5)
     end
 end
 

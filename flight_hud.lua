@@ -17,7 +17,10 @@ local dfpwm = require("cc.audio.dfpwm")
     PERIPHERALS
 ]]
 
-local MONITOR = peripheral.find("monitor")
+-- local MONITOR = peripheral.find("monitor")
+-- TEST: CHANGE LATER
+local MONITOR
+local HOLOGRAM = peripheral.find("monitor")
 local SPEAKER = peripheral.find("speaker")
 local MODEM = peripheral.find("modem")
 
@@ -50,7 +53,7 @@ local WSO_ID = "wso_comp"
 local INCOMING_CHANNEL, OUTGOING_CHANNEL = 6060, 6060
 
 -- No need to touch these
-local SCREEN_WIDTH, SCREEN_HEIGHT = 15, 10 -- Minimum is 15 width, 10 height
+local SCREEN_WIDTH, SCREEN_HEIGHT = 15, 10 -- Minimum is 15 width, 10 height. Width should be odd!
 local DIRECTIONS = { "N", "E", "S", "W" }
 local GRAVITY = 10                         -- m/s (I'm using CBC's gravity value)
 local SOUND_EXTENSION_TYPE = "dfpwm"
@@ -100,9 +103,28 @@ end
 local inbox, old_inbox = {}, {}
 local wso_is_valid = false
 
+local frame_buffer = {}
+for y = 1, SCREEN_HEIGHT do
+    frame_buffer[y] = {}
+    for x = 1, SCREEN_WIDTH do
+        frame_buffer[y][x] = " "
+    end
+end
+
 --[[
     UTIL
 ]]
+
+local function center_string(string, width)
+    local padding = width - #string
+    local left_pad = math.floor(padding / 2)
+    local right_pad = padding - left_pad
+    return string.rep(" ", left_pad) .. string .. string.rep(" ", right_pad)
+end
+
+local function clamp(value, min, max)
+    return math.min(max, math.max(min, value))
+end
 
 local function round(number, decimal)
     if decimal then
@@ -111,13 +133,6 @@ local function round(number, decimal)
     else
         return math.floor(number + 0.5)
     end
-end
-
-local function center_string(string, width)
-    local padding = width - #string
-    local left_pad = math.floor(padding / 2)
-    local right_pad = padding - left_pad
-    return string.rep(" ", left_pad) .. string .. string.rep(" ", right_pad)
 end
 
 local function run_async(func, ...)
@@ -223,11 +238,25 @@ end
 ]]
 
 local function write_at(x, y, text, colour)
-    local previous_colour = MONITOR.getTextColour()
-    if colour then MONITOR.setTextColour(colour) end
-    MONITOR.setCursorPos(x, y)
-    MONITOR.write(text)
-    MONITOR.setTextColour(previous_colour)
+    if MONITOR then
+        local previous_colour = MONITOR.getTextColour()
+        if colour then MONITOR.setTextColour(colour) end
+        MONITOR.setCursorPos(x, y)
+        MONITOR.write(text)
+        MONITOR.setTextColour(previous_colour)
+    end
+
+    if HOLOGRAM then
+        -- Uhh how do we handle this?
+
+        -- 1. We know the initial pos = frame_buffer[x][y]
+        -- 3. For every char, increase at x+1, y (no need for \n)
+        -- 4. No need for colours.
+
+        for i = 1, #text do
+            frame_buffer[y][x + i - 1] = string.sub(text, i, i)
+        end
+    end
 end
 
 -- Consider this function as copied from Endal
@@ -309,7 +338,7 @@ local function draw_heading()
         local min_x = 3
         local max_x = SCREEN_WIDTH - 1
 
-        marker_position = math.max(min_x, math.min(max_x, ideal_position))
+        marker_position = clamp(ideal_position, min_x, max_x)
         if marker_position == min_x and ideal_position < min_x then
             marker_symbol = "\x1B" -- Left arrow
         elseif marker_position == max_x and ideal_position > max_x then
@@ -387,7 +416,7 @@ local function center_display()
     self.min_x = self.center_x - math.floor(self.width / 2)
     self.max_x = self.center_x + math.ceil(self.width / 2)
     self.min_y = self.center_y - math.floor(self.height / 2)
-    self.max_y = self.center_y + math.ceil(self.height / 2)
+    self.max_y = self.center_y + math.ceil(self.height / 2) - 1
 
     self.horizon_y = 0
 
@@ -435,10 +464,10 @@ local function center_display()
         end
 
         if wso_is_valid then
-            local target_y = self.horizon_y - math.floor(plane.tgt_pitch / 20) * self.ladder_spacing + 1
+            local target_y = self.horizon_y - math.floor(plane.tgt_pitch / 20) * self.ladder_spacing
 
             -- Clamp the marker position to the visible area
-            target_y = math.max(self.min_y, math.min(target_y, self.max_y - 1))
+            target_y = clamp(target_y, self.min_x, self.max_y)
 
             -- Draw the marker
             self.draw_ladder_line(self.center_x - 2, target_y, "\xBB")
@@ -451,14 +480,11 @@ local function center_display()
 
     -- Clip a line to stay within bounds
     function self.clip_point(x, y)
-        return math.max(self.min_x, math.min(x, self.max_x)),
-            math.max(self.min_y, math.min(y, self.max_y - 1))
+        return clamp(x, self.min_x, self.max_x), clamp(y, self.min_y, self.max_y)
     end
 
     function self.draw_ladder_line(x, y, char, pitch)
-        -- LATER: stupid inconsistency, otherwise the ladder will draw too low
-        -- but if not >= then it will draw not high enough
-        if y >= self.min_y and y < self.max_y then
+        if y >= self.min_y and y <= self.max_y then
             write_at(x, y, char)
             if pitch then
                 local formatted_number = string.format("% 2d", pitch / 10)
@@ -471,26 +497,54 @@ local function center_display()
 end
 
 local function hud_displayer()
-    if not MONITOR then return end
-    print("Monitor attached.")
-    -- TEST: UNCOMMENT LATER
-    -- MONITOR.setTextScale(0.5)
-    -- LATER: this is really stupid
-    MONITOR.setPaletteColour(colours.black, HUD_BACKGROUND_COLOUR)
-    MONITOR.setBackgroundColour(colours.black)
-    MONITOR.setPaletteColour(colours.lime, HUD_TEXT_COLOUR)
-    MONITOR.setTextColour(colours.lime)
-    local CENTER_DISPLAY = center_display()
+    if MONITOR then
+        -- TEST: UNCOMMENT LATER
+        -- MONITOR.setTextScale(0.5)
+        -- LATER: this is really stupid
+        MONITOR.setPaletteColour(colours.black, HUD_BACKGROUND_COLOUR)
+        MONITOR.setBackgroundColour(colours.black)
+        MONITOR.setPaletteColour(colours.lime, HUD_TEXT_COLOUR)
+        MONITOR.setTextColour(colours.lime)
+    end
 
-    while true do
-        MONITOR.clear()
+    if MONITOR or HOLOGRAM then
+        print("Display attached.")
 
-        CENTER_DISPLAY.draw()
-        draw_heading()
-        draw_altitude()
-        draw_speed()
+        local CENTER_DISPLAY = center_display()
+        while true do
+            if MONITOR then
+                MONITOR.clear()
+            end
 
-        sleep(DELTA_TICK / 20)
+            CENTER_DISPLAY.draw()
+            draw_heading()
+            draw_altitude()
+            draw_speed()
+
+            if HOLOGRAM then
+                local frame_string = ""
+                -- Convert char table to text and add \n's
+                for y = 1, SCREEN_HEIGHT do
+                    frame_string = frame_string .. table.concat(frame_buffer[y]) .. "\n"
+                end
+                -- Send frame_buffer to the hologram
+                -- TODO: placeholder
+                term.setPaletteColour(colours.lime, HUD_TEXT_COLOUR)
+                term.setTextColour(colours.lime)
+                term.clear()
+                print(frame_string)
+
+                -- Clear frame_buffer
+                for y = 1, SCREEN_HEIGHT do
+                    -- frame_buffer[y] = {}
+                    for x = 1, SCREEN_WIDTH do
+                        frame_buffer[y][x] = " "
+                    end
+                end
+            end
+
+            sleep(DELTA_TICK / 20)
+        end
     end
 end
 
@@ -606,6 +660,7 @@ parallel.waitForAll(main, hud_displayer, sound_player, message_handler)
 -- TODO: make hud scalable --> scale values like spd/alt (especially pitch ladder) too.
 
 -- Priority: new features planned
+-- TODO: implement void hologram support
 -- TODO: split the horizon into 2 lines, like huds irl (2x3 I'm thinking --> width//2 -1)
 -- TODO: figure out turtles, they allow for more compactness (3 periph slots, takes up 0 space)
 
