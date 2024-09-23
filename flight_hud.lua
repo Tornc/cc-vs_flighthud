@@ -11,18 +11,17 @@ local pretty = require("cc.pretty")
     MODULES
 ]]
 
+local bit32 = require("bit32")
 local dfpwm = require("cc.audio.dfpwm")
 
 --[[
     PERIPHERALS
 ]]
 
--- local MONITOR = peripheral.find("monitor")
--- TEST: CHANGE LATER
-local MONITOR
-local HOLOGRAM = peripheral.find("monitor")
-local SPEAKER = peripheral.find("speaker")
+local HOLOGRAM = peripheral.find("hologram")
 local MODEM = peripheral.find("modem")
+local MONITOR = peripheral.find("monitor")
+local SPEAKER = peripheral.find("speaker")
 
 --[[
     CONSTANTS
@@ -35,71 +34,98 @@ local LANDED_THRESHOLD = 3                   -- How close to ground level you ne
 local GROUND_WARNING_THRESHOLD = 70          --
 local CRITICAL_GROUND_WARNING_THRESHOLD = 30 --
 local G_FORCE_WARNING_THRESHOLD = 8.5        --
+local TARGET_NEARBY_THRESHOLD = 150          -- In blocks. Only useful if you have a WSO
 local SOUNDS = {                             -- Format: "FILE_NAME", sound cooldown in ticks
     ground_warning = { "ALTITUDE", 150 },
     critical_ground_warning = { "PULL_UP", 60 },
     over_g_warning = { "OVER_G", 100 },
-    hit_warning = { "WARNING", 60 }, -- Look, I don't have a better system other than mass to detect damage
+    hit_warning = { "WARNING", 60 },                   -- Look, I don't have a better system other than mass to detect damage
 }
-local TARGET_NEARBY_THRESHOLD = 150  -- Only useful if you have a WSO
-local HUD_BACKGROUND_COLOUR = 0x000000
-local HUD_TEXT_COLOUR = 0x00FF00
+local SOUND_VOLUME = 1                                 -- 0.0 to 3.0
 
-local DELTA_TICK = 3   -- How often the script runs (3 = once every 3 ticks), increase if the screen flickers a lot (lag)
-local SOUND_VOLUME = 1 -- 🗣️🗣️🗣️
+local HUD_BACKGROUND_COLOUR = colours.packRGB(0, 0, 0) -- Colour is on a scale of 0 (min) to 1 (max).
+local HUD_TEXT_COLOUR = colours.packRGB(0, 1, 0)
+local SCREEN_WIDTH, SCREEN_HEIGHT = 15, 10             -- Minimum is 15 width, 10 height. Width should be odd!
+-- How often the script runs (3 = once every 3 ticks), increase if the screen flickers a lot (lag)
+local DELTA_TICK = 3
 
+-- Networking stuff
 local MY_ID = "pilot_comp"
 local WSO_ID = "wso_comp"
 local INCOMING_CHANNEL, OUTGOING_CHANNEL = 6060, 6060
 
 -- No need to touch these
-local SCREEN_WIDTH, SCREEN_HEIGHT = 15, 10 -- Minimum is 15 width, 10 height. Width should be odd!
-local DIRECTIONS = { "N", "E", "S", "W" }
-local GRAVITY = 10                         -- m/s (I'm using CBC's gravity value)
+local VERSION = "5.0-ug"
+local GRAVITY = vector.new(0, -10, 0) -- m/s (I'm using CBC's gravity value)
 local SOUND_EXTENSION_TYPE = "dfpwm"
 local DECODER = dfpwm.make_decoder()
+local DIRECTIONS = { "N", "E", "S", "W" }
+local CC_GBK_CHARS = { -- Voidpower mod's hologram uses GBK character set.
+    [""] = ""
+}
 
 --[[
     STATE VARIABLES
 ]]
 
 local current_time = 0
+-- local plane = {
+--     x = 0, -- Position
+--     y = 0,
+--     z = 0,
+--     vx = 0, -- Velocity
+--     vy = 0,
+--     vz = 0,
+
+--     speed = 0,
+--     max_speed = 0,
+
+--     ax = 0, -- Acceleration
+--     ay = 0,
+--     az = 0,
+--     o_x = 0, -- Omega
+--     o_y = 0,
+--     o_z = 0,
+--     g_force = 0,
+--     yaw = 0, -- Orientation
+--     pitch = 0,
+--     roll = 0,
+--     mass = 0,
+
+--     rel_y = 0,
+--     got_hit = false,
+--     has_taken_off = false,
+--     descending = false,
+
+--     tgt_distance = 0, -- WSO information
+--     tgt_yaw = 0,
+--     tgt_pitch = 0,
+-- }
 local plane = {
-    x = 0, -- Position
-    y = 0,
-    z = 0,
-    vx = 0, -- Velocity
-    vy = 0,
-    vz = 0,
+    pos = vector.new(),   -- Position
+    vel = vector.new(),   -- Velocity
+    acc = vector.new(),   -- Acceleration
+    omega = vector.new(), -- Angular velocity
+    ori = vector.new(),   -- Orientation: x = pitch, y = yaw, z = roll
 
     speed = 0,
     max_speed = 0,
 
-    ax = 0, -- Acceleration
-    ay = 0,
-    az = 0,
-    o_x = 0, -- Omega
-    o_y = 0,
-    o_z = 0,
+    -- HUD + sound
     g_force = 0,
-    yaw = 0, -- Orientation
-    pitch = 0,
-    roll = 0,
-    mass = 0,
-
     rel_y = 0,
+    -- Sound only
+    mass = 0,
     got_hit = false,
     has_taken_off = false,
     descending = false,
-
-    tgt_distance = 0, -- WSO information
+    -- WSO information
+    tgt_distance = 0,
     tgt_yaw = 0,
     tgt_pitch = 0,
 }
 local last_played = {}
-for _, v in pairs(SOUNDS) do
-    last_played[v[1]] = 0
-end
+for _, v in pairs(SOUNDS) do last_played[v[1]] = 0 end
 local inbox, old_inbox = {}, {}
 local wso_is_valid = false
 
@@ -143,6 +169,13 @@ local function run_async(func, ...)
         end
     )
     coroutine.resume(co)
+end
+
+local function tbl_to_vec(vector, table)
+    vector.x = table.x or table[1]
+    vector.y = table.y or table[2]
+    vector.z = table.z or table[3]
+    return vector
 end
 
 --[[
@@ -238,6 +271,12 @@ end
 ]]
 
 local function write_at(x, y, text, colour)
+    if not (MONITOR or HOLOGRAM) then return end
+    assert(math.floor(x) == x, x .. " (x) is not an integer.")
+    assert(math.floor(y) == y, y .. " (y) is not an integer.")
+    assert(x >= 1 and x <= SCREEN_WIDTH, x .. " (x) is out of bounds.")
+    assert(y >= 1 and y <= SCREEN_HEIGHT, y .. " (y) is out of bounds.")
+
     if MONITOR then
         local previous_colour = MONITOR.getTextColour()
         if colour then MONITOR.setTextColour(colour) end
@@ -247,12 +286,6 @@ local function write_at(x, y, text, colour)
     end
 
     if HOLOGRAM then
-        -- Uhh how do we handle this?
-
-        -- 1. We know the initial pos = frame_buffer[x][y]
-        -- 3. For every char, increase at x+1, y (no need for \n)
-        -- 4. No need for colours.
-
         for i = 1, #text do
             frame_buffer[y][x + i - 1] = string.sub(text, i, i)
         end
@@ -260,6 +293,7 @@ local function write_at(x, y, text, colour)
 end
 
 -- Consider this function as copied from Endal
+-- https://en.wikipedia.org/wiki/Bresenham%27s_line_algorithm
 local line_types = { "\xAF", "-", "_", "|" } -- High, middle, low, vertical
 local function plot_line(x0, y0, x1, y1)
     y1 = math.floor(y1 * (#line_types - 1) + 1)
@@ -304,7 +338,7 @@ local function draw_heading()
     write_at(1, 2, "\xAB", heading_colour)
     write_at(SCREEN_WIDTH, 2, "\xBB", heading_colour)
 
-    local yaw_offset = math.floor(plane.yaw / 10 + 0.5)
+    local yaw_offset = math.floor(plane.ori.y / 10 + 0.5)
     local adjustment = 2
     for i = 0, SCREEN_WIDTH - 2 * adjustment + 1 do
         local x = i + adjustment
@@ -326,13 +360,13 @@ local function draw_heading()
     end
 
     -- Display the yaw top-mid
-    local string_formatted_yaw = string.format("%03d", plane.yaw)
+    local string_formatted_yaw = string.format("%03d", plane.ori.y)
     write_at(math.floor(SCREEN_WIDTH / 2), 1, string_formatted_yaw, heading_colour)
 
     local marker_position, marker_symbol
     if MODEM and wso_is_valid then
         -- Display the marker according to the target yaw
-        local yaw_difference = (plane.tgt_yaw - plane.yaw + 180) % 360 - 180
+        local yaw_difference = (plane.tgt_yaw - plane.ori.y + 180) % 360 - 180
         local ideal_position = math.floor(SCREEN_WIDTH / 2 + yaw_difference / 10 + 0.5)
 
         local min_x = 3
@@ -392,7 +426,7 @@ local function draw_speed()
     end
 
     local fraction = plane.max_speed ~= 0 and plane.speed / plane.max_speed or 0
-    local indicator_height = y_offset + strip_length - fraction * strip_length + 1
+    local indicator_height = round(y_offset + strip_length - fraction * strip_length + 1)
     write_at(2, indicator_height, "\x11")
 
     local rounded_speed = round(plane.speed)
@@ -432,10 +466,10 @@ local function center_display()
 
     function self.draw_horizon()
         -- Calculate horizon line position based on pitch
-        self.horizon_y = self.center_y + math.floor(round(plane.pitch) * (self.height / 2) / 45)
+        self.horizon_y = self.center_y + math.floor(round(plane.ori.x) * (self.height / 2) / 45)
 
         -- Calculate roll
-        local rounded_roll_deg = round(plane.roll)
+        local rounded_roll_deg = round(plane.ori.z)
         local roll_rad = INVERT_ROLL and -math.rad(rounded_roll_deg) or math.rad(rounded_roll_deg)
         local dx = math.cos(roll_rad) * (self.width / 2)
         local dy = math.sin(roll_rad) * (self.width / 2)
@@ -497,54 +531,58 @@ local function center_display()
 end
 
 local function hud_displayer()
+    if not (MONITOR or HOLOGRAM) then return end
+
     if MONITOR then
+        print("Monitor attached.")
         -- TEST: UNCOMMENT LATER
         -- MONITOR.setTextScale(0.5)
-        -- LATER: this is really stupid
         MONITOR.setPaletteColour(colours.black, HUD_BACKGROUND_COLOUR)
         MONITOR.setBackgroundColour(colours.black)
         MONITOR.setPaletteColour(colours.lime, HUD_TEXT_COLOUR)
         MONITOR.setTextColour(colours.lime)
     end
 
-    if MONITOR or HOLOGRAM then
-        print("Display attached.")
+    if HOLOGRAM then
+        print("Hologram attached.")
+        -- A 1x1 hologram has 16x16 pixels.
+        HOLOGRAM.Resize(120, 242 + 30) -- LATER: The 30 will NOT scale well!
+        HOLOGRAM.SetScale(16 / 120, 16 / (242 + 30))
+    end
 
-        local CENTER_DISPLAY = center_display()
-        while true do
-            if MONITOR then
-                MONITOR.clear()
-            end
-
-            CENTER_DISPLAY.draw()
-            draw_heading()
-            draw_altitude()
-            draw_speed()
-
-            if HOLOGRAM then
-                local frame_string = ""
-                -- Convert char table to text and add \n's
-                for y = 1, SCREEN_HEIGHT do
-                    frame_string = frame_string .. table.concat(frame_buffer[y]) .. "\n"
-                end
-                -- Send frame_buffer to the hologram
-                -- TODO: placeholder
-                term.setPaletteColour(colours.lime, HUD_TEXT_COLOUR)
-                term.setTextColour(colours.lime)
-                term.clear()
-                print(frame_string)
-
-                -- Clear frame_buffer
-                for y = 1, SCREEN_HEIGHT do
-                    -- frame_buffer[y] = {}
-                    for x = 1, SCREEN_WIDTH do
-                        frame_buffer[y][x] = " "
-                    end
-                end
-            end
-
-            sleep(DELTA_TICK / 20)
+    local CENTER_DISPLAY = center_display()
+    while true do
+        if MONITOR then
+            MONITOR.clear()
         end
+
+        CENTER_DISPLAY.draw()
+        draw_heading()
+        draw_altitude()
+        draw_speed()
+
+        if HOLOGRAM then
+            HOLOGRAM.Clear()
+            -- Convert frame_buffer to hologram Text() objects
+            -- This \n rep shenanigans is really dumb, but putting
+            -- \n at the end doesn't work for some reason.
+            for y = 1, SCREEN_HEIGHT do
+                HOLOGRAM.Text(
+                    0, 0,
+                    string.rep("\n", y - 1) .. table.concat(frame_buffer[y]),
+                    bit32.lshift(HUD_TEXT_COLOUR, 8) + 0xFF, 0
+                )            -- Add alpha value to text colour.
+            end
+            HOLOGRAM.Flush() -- Refresh screen
+            -- Clear frame_buffer
+            for y = 1, SCREEN_HEIGHT do
+                for x = 1, SCREEN_WIDTH do
+                    frame_buffer[y][x] = " "
+                end
+            end
+        end
+
+        sleep(DELTA_TICK / 20)
     end
 end
 
@@ -553,54 +591,27 @@ end
 ]]
 
 local function update_information()
-    local position = ship.getWorldspacePosition()
-    local velocity = ship.getVelocity()
-    local omega = ship.getOmega()
+    local velocity = tbl_to_vec(vector.new(), ship.getVelocity())
+    local omega = tbl_to_vec(vector.new(), ship.getOmega())
 
-    local dt = DELTA_TICK / 20
-    -- Linear acceleration
-    local linear_ax = (velocity.x - plane.vx) / dt
-    local linear_ay = (velocity.y - plane.vy) / dt
-    local linear_az = (velocity.z - plane.vz) / dt
-    -- Angular acceleration
-    local angular_ax = (omega.x - plane.o_x) / dt
-    local angular_ay = (omega.y - plane.o_y) / dt
-    local angular_az = (omega.z - plane.o_z) / dt
+    local dt = DELTA_TICK * 0.05
+    local linear_acc = (velocity - plane.vel) / dt
+    local angular_acc = (omega - plane.omega) / dt
+    plane.acc = linear_acc + angular_acc + GRAVITY
 
-    local combined_ax = linear_ax + angular_ax
-    local combined_ay = linear_ay + angular_ay - GRAVITY
-    local combined_az = linear_az + angular_az
+    plane.g_force = plane.acc:length() / GRAVITY:length()
 
-    plane.ax = combined_ax
-    plane.ay = combined_ay
-    plane.az = combined_az
+    plane.pos = tbl_to_vec(plane.pos, ship.getWorldspacePosition())
+    plane.vel = velocity
+    plane.omega = omega
+    plane.ori = tbl_to_vec(plane.ori,
+        { math.deg(ship.getPitch()), math.deg(ship.getYaw()), math.deg(ship.getRoll()) }
+    )
 
-    local a_magnitude = math.sqrt(plane.ax ^ 2 + plane.ay ^ 2 + plane.az ^ 2)
-    plane.g_force = a_magnitude / GRAVITY
-
-    -- At the moment, x, z aren't used.
-    -- Position
-    plane.x = position.x
-    plane.y = position.y
-    plane.z = position.z
-    -- Velocity
-    plane.vx = velocity.x
-    plane.vy = velocity.y
-    plane.vz = velocity.z
-
-    plane.speed = math.sqrt(plane.vx ^ 2 + plane.vy ^ 2 + plane.vz ^ 2)
+    plane.speed = plane.vel:length()
     plane.max_speed = math.max(plane.speed, plane.max_speed)
-    -- Angular velocity
-    plane.omega_x = omega.x
-    plane.omega_y = omega.y
-    plane.omega_z = omega.z
 
-    -- Rotation
-    plane.yaw = math.deg(ship.getYaw())
-    plane.pitch = math.deg(ship.getPitch())
-    plane.roll = math.deg(ship.getRoll())
-
-    plane.rel_y = plane.y - GROUND_LEVEL
+    plane.rel_y = plane.pos.y - GROUND_LEVEL
 
     if SPEAKER then
         local new_mass = ship.getMass()
@@ -614,7 +625,7 @@ local function update_information()
         elseif plane.has_taken_off and (plane.rel_y < LANDED_THRESHOLD or ship.isStatic()) then
             plane.has_taken_off = false
         end
-        plane.descending = round(plane.vy, 1) < 0
+        plane.descending = round(plane.vel.y, 1) < 0
     end
 
     if MODEM then
@@ -646,24 +657,26 @@ local function main()
     end
 end
 
+local display_string = "=][= Flight Hud v" .. VERSION .. " =][="
+print(display_string)
+print(string.rep("-", string.len(display_string)))
 parallel.waitForAll(main, hud_displayer, sound_player, message_handler)
 
 -- 1x1 monitor resolution is only 7x4 💀
 -- 1x1 monitor resolution at 0.5 scale is 15x10
 
--- TODO: ✨ E N C R Y P T I O N ✨
-
 -- Priority: bugfixing (end it all)
+-- TODO: Allow for https://www.fileformat.info/info/charset/GBK/list.htm conversion
+--       Make a table (dict) with keys (cc special chars) and vals be from GBK equivalent
 -- TODO: NSEW assembly roll/pitch inversion arguments
 -- TODO: Rework G-force (it's completely fucked) + add negative G-force
---      Convert as many things to cc vectors as possible.
--- TODO: make hud scalable --> scale values like spd/alt (especially pitch ladder) too.
+-- TODO: Draw to window, this will prevent screen flickering because window acts as a frame buffer.
 
 -- Priority: new features planned
--- TODO: implement void hologram support
+-- TODO: total velocity vector
 -- TODO: split the horizon into 2 lines, like huds irl (2x3 I'm thinking --> width//2 -1)
--- TODO: figure out turtles, they allow for more compactness (3 periph slots, takes up 0 space)
+-- TODO: ✨ E N C R Y P T I O N ✨
 
 -- Priority: procrastination
--- add comments and clean stuff up
+-- make hud fully scalable --> scale values like spd/alt (especially pitch ladder) too.
 -- make a better setup video which actually fucking shows files dragging in

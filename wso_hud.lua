@@ -33,10 +33,10 @@ local SCREEN_WIDTH, SCREEN_HEIGHT = 15, 10
 
 local current_time = 0
 local plane = {
-    pos = vector.new(0, 0, 0),  -- Position
-    vel = vector.new(0, 0, 0),  -- Velocity
-    ori = vector.new(0, 0, 0),  -- Orientation: x = pitch, y = yaw, z = roll
-    dpos = vector.new(0, 0, 0), -- Difference in XYZ between plane and target
+    pos = vector.new(),  -- Position
+    vel = vector.new(),  -- Velocity
+    ori = vector.new(),  -- Orientation: x = pitch, y = yaw, z = roll
+    dpos = vector.new(), -- Difference in XYZ between plane and target
 
     speed = 0,
     max_speed = 0,
@@ -94,6 +94,13 @@ local function round(number, decimal)
     else
         return math.floor(number + 0.5)
     end
+end
+
+local function tbl_to_vec(vector, table)
+    vector.x = table.x or table[1]
+    vector.y = table.y or table[2]
+    vector.z = table.z or table[3]
+    return vector
 end
 
 --[[
@@ -431,21 +438,11 @@ local function update_current_target()
 end
 
 local function update_information()
-    local position = ship.getWorldspacePosition()
-    local velocity = ship.getVelocity()
-
-    -- Position
-    plane.pos.x = position.x
-    plane.pos.y = position.y
-    plane.pos.z = position.z
-    -- Velocity
-    plane.vel.x = velocity.x
-    plane.vel.y = velocity.y
-    plane.vel.z = velocity.z
-
-    plane.ori.x = math.deg(ship.getPitch())
-    plane.ori.y = math.deg(ship.getYaw())
-    plane.ori.z = math.deg(ship.getRoll())
+    plane.pos = tbl_to_vec(plane.pos, ship.getWorldspacePosition())
+    plane.vel = tbl_to_vec(plane.vel, ship.getVelocity())
+    plane.ori = tbl_to_vec(plane.ori,
+        { math.deg(ship.getPitch()), math.deg(ship.getYaw()), math.deg(ship.getRoll()) }
+    )
 
     plane.speed = plane.vel:length()
     plane.max_speed = math.max(plane.speed, plane.max_speed)
@@ -521,7 +518,7 @@ end
 
 parallel.waitForAll(main, HUD_displayer, input_handler, message_handler)
 
--- TODO: allow for button actions to have parms (...). reorder colour so it's before action. 
+-- TODO: allow for button actions to have params (...). reorder colour so it's before action.
 -- Modify every button creation accordingly (add nil)
 
 -- TODO: instead of sending dist, tyaw and tpitch, just send txyz every n seconds.
