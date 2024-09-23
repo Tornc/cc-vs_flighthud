@@ -69,38 +69,6 @@ local CC_GBK_CHARS = { -- Voidpower mod's hologram uses GBK character set.
 ]]
 
 local current_time = 0
--- local plane = {
---     x = 0, -- Position
---     y = 0,
---     z = 0,
---     vx = 0, -- Velocity
---     vy = 0,
---     vz = 0,
-
---     speed = 0,
---     max_speed = 0,
-
---     ax = 0, -- Acceleration
---     ay = 0,
---     az = 0,
---     o_x = 0, -- Omega
---     o_y = 0,
---     o_z = 0,
---     g_force = 0,
---     yaw = 0, -- Orientation
---     pitch = 0,
---     roll = 0,
---     mass = 0,
-
---     rel_y = 0,
---     got_hit = false,
---     has_taken_off = false,
---     descending = false,
-
---     tgt_distance = 0, -- WSO information
---     tgt_yaw = 0,
---     tgt_pitch = 0,
--- }
 local plane = {
     pos = vector.new(),   -- Position
     vel = vector.new(),   -- Velocity
