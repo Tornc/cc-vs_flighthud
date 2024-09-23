@@ -34,7 +34,7 @@ local LANDED_THRESHOLD = 3                   -- How close to ground level you ne
 local GROUND_WARNING_THRESHOLD = 70          --
 local CRITICAL_GROUND_WARNING_THRESHOLD = 30 --
 local G_FORCE_WARNING_THRESHOLD = 8.5        --
-local TARGET_NEARBY_THRESHOLD = 150          -- In blocks. Only useful if you have a WSO
+local TARGET_NEARBY_THRESHOLD = 150          -- In blocks. Only useful if flighthud receives messages from wso_comp
 local SOUNDS = {                             -- Format: "FILE_NAME", sound cooldown in ticks
     ground_warning = { "ALTITUDE", 150 },
     critical_ground_warning = { "PULL_UP", 60 },
@@ -56,12 +56,24 @@ local INCOMING_CHANNEL, OUTGOING_CHANNEL = 6060, 6060
 
 -- No need to touch these
 local VERSION = "5.0-ug"
-local GRAVITY = vector.new(0, -10, 0) -- m/s (I'm using CBC's gravity value)
+local GRAVITY_VEC = vector.new(0, -10, 0) -- m/s (I'm using CBC's gravity value)
 local SOUND_EXTENSION_TYPE = "dfpwm"
 local DECODER = dfpwm.make_decoder()
 local DIRECTIONS = { "N", "E", "S", "W" }
-local CC_GBK_CHARS = { -- Voidpower mod's hologram uses GBK character set.
-    [""] = ""
+-- Voidpower mod's hologram uses GBK character set. See: https://www.fileformat.info/info/charset/GBK/list.htm
+local CC_TO_GBK = {
+    ["\xAF"] = "\\uFE49", -- High line
+    ["\xAB"] = "\\u300A", -- <<
+    ["\xBB"] = "\\u300B", -- >>
+    ["\x1B"] = "\\u2190", -- Left arrow
+    ["\x18"] = "\\u2191", -- Up arrow
+    ["\x1A"] = "\\u2192", -- Right arrow
+    ["\xB7"] = "\\u25A0", -- Central filled square (small-ish)
+    ["\x1E"] = "\\u25B2", -- Up triangle
+    ["\x10"] = "\\u25E2", -- Right triangle (not ideal)
+    ["\x11"] = "\\u25E3", -- Left triangle (not ideal)
+    [","] = "\\u2533",    -- ┳
+    ["|"] = "\\u2503",    -- ┃ (Heavy version of |)
 }
 
 --[[
@@ -72,10 +84,10 @@ local current_time = 0
 local plane = {
     pos = vector.new(),   -- Position
     vel = vector.new(),   -- Velocity
-    acc = vector.new(),   -- Acceleration
     omega = vector.new(), -- Angular velocity
     ori = vector.new(),   -- Orientation: x = pitch, y = yaw, z = roll
 
+    -- HUD only
     speed = 0,
     max_speed = 0,
 
@@ -139,11 +151,12 @@ local function run_async(func, ...)
     coroutine.resume(co)
 end
 
-local function tbl_to_vec(vector, table)
-    vector.x = table.x or table[1]
-    vector.y = table.y or table[2]
-    vector.z = table.z or table[3]
-    return vector
+local function tbl_to_vec(table)
+    return vector.new(
+        table.x or table[1],
+        table.y or table[2],
+        table.z or table[3]
+    )
 end
 
 --[[
@@ -254,8 +267,10 @@ local function write_at(x, y, text, colour)
     end
 
     if HOLOGRAM then
+        local char
         for i = 1, #text do
-            frame_buffer[y][x + i - 1] = string.sub(text, i, i)
+            char = string.sub(text, i, i)
+            frame_buffer[y][x + i - 1] = CC_TO_GBK[char] or char
         end
     end
 end
@@ -303,8 +318,8 @@ local function draw_heading()
     -- Outer arrows, draw on strip level
     local heading_colour = ((MODEM and wso_is_valid) and plane.tgt_distance <= TARGET_NEARBY_THRESHOLD)
         and colours.red or nil
-    write_at(1, 2, "\xAB", heading_colour)
-    write_at(SCREEN_WIDTH, 2, "\xBB", heading_colour)
+    write_at(1, 2, "\xAB", heading_colour)            -- Left arrow (<<)
+    write_at(SCREEN_WIDTH, 2, "\xBB", heading_colour) -- Right arrow (>>)
 
     local yaw_offset = math.floor(plane.ori.y / 10 + 0.5)
     local adjustment = 2
@@ -418,7 +433,7 @@ local function center_display()
     self.min_x = self.center_x - math.floor(self.width / 2)
     self.max_x = self.center_x + math.ceil(self.width / 2)
     self.min_y = self.center_y - math.floor(self.height / 2)
-    self.max_y = self.center_y + math.ceil(self.height / 2) - 1
+    self.max_y = self.center_y + math.ceil(self.height / 2) - 1 -- forgot why.
 
     self.horizon_y = 0
 
@@ -559,20 +574,20 @@ end
 ]]
 
 local function update_information()
-    local velocity = tbl_to_vec(vector.new(), ship.getVelocity())
-    local omega = tbl_to_vec(vector.new(), ship.getOmega())
+    local velocity = tbl_to_vec(ship.getVelocity())
+    local omega = tbl_to_vec(ship.getOmega())
 
     local dt = DELTA_TICK * 0.05
     local linear_acc = (velocity - plane.vel) / dt
     local angular_acc = (omega - plane.omega) / dt
-    plane.acc = linear_acc + angular_acc + GRAVITY
+    local combined_acc = linear_acc + angular_acc + GRAVITY_VEC
 
-    plane.g_force = plane.acc:length() / GRAVITY:length()
+    plane.g_force = combined_acc:length() / GRAVITY_VEC:length()
 
-    plane.pos = tbl_to_vec(plane.pos, ship.getWorldspacePosition())
+    plane.pos = tbl_to_vec(ship.getWorldspacePosition())
     plane.vel = velocity
     plane.omega = omega
-    plane.ori = tbl_to_vec(plane.ori,
+    plane.ori = tbl_to_vec(
         { math.deg(ship.getPitch()), math.deg(ship.getYaw()), math.deg(ship.getRoll()) }
     )
 
@@ -634,8 +649,6 @@ parallel.waitForAll(main, hud_displayer, sound_player, message_handler)
 -- 1x1 monitor resolution at 0.5 scale is 15x10
 
 -- Priority: bugfixing (end it all)
--- TODO: Allow for https://www.fileformat.info/info/charset/GBK/list.htm conversion
---       Make a table (dict) with keys (cc special chars) and vals be from GBK equivalent
 -- TODO: NSEW assembly roll/pitch inversion arguments
 -- TODO: Rework G-force (it's completely fucked) + add negative G-force
 -- TODO: Draw to window, this will prevent screen flickering because window acts as a frame buffer.
