@@ -277,10 +277,10 @@ end
 
 -- Consider this function as copied from Endal
 -- https://en.wikipedia.org/wiki/Bresenham%27s_line_algorithm
-local line_types = { "\xAF", "-", "_", "|" } -- High, middle, low, vertical
+local LINE_TYPES = { "\xAF", "-", "_", "|" } -- High, middle, low, vertical.
 local function plot_line(x0, y0, x1, y1)
-    y1 = math.floor(y1 * (#line_types - 1) + 1)
-    y0 = math.floor(y0 * (#line_types - 1) + 1)
+    y1 = math.floor(y1 * (#LINE_TYPES - 1) + 1)
+    y0 = math.floor(y0 * (#LINE_TYPES - 1) + 1)
     x1 = math.floor(x1)
     x0 = math.floor(x0)
     local dx = math.abs(x1 - x0)
@@ -291,11 +291,11 @@ local function plot_line(x0, y0, x1, y1)
 
     while true do
         local char = dx < 3 and
-            line_types[#line_types] or
-            line_types[math.floor(y0 % (#line_types - 1)) + 1]
+            LINE_TYPES[#LINE_TYPES] or
+            LINE_TYPES[math.floor(y0 % (#LINE_TYPES - 1)) + 1]
         write_at(
             x0,
-            math.floor(y0 / (#line_types - 1)),
+            math.floor(y0 / (#LINE_TYPES - 1)),
             char
         )
         if x0 == x1 and y0 == y1 then break end
@@ -372,18 +372,22 @@ local function draw_heading()
     write_at(marker_position, 3, marker_symbol, heading_colour)
 end
 
+local function draw_strip(value, x, y, length, val_scale)
+    -- We do this to create the illusion that the strip is moving up/down
+    -- Every [2x value] is -, every [value] is .
+    local rounded_value = val_scale * math.floor(value / val_scale + 0.5)
+    local is_2x = rounded_value % (2 * val_scale) == 0
+    for i = 1, length do
+        local char = (i % 2 == 0) == is_2x and "-" or "\xB7" -- small filled square
+        write_at(x, i + y, char)
+    end
+end
+
 local function draw_altitude()
     local y_offset = 2
     local strip_length = SCREEN_HEIGHT - 3 -- Heading takes up 2y, Alt takes up 1
-    -- Every 100 meters is -, every 50 is .
-    local rounded_alt = 50 * math.floor(plane.rel_y / 50 + 0.5)
-    local is_hundred = rounded_alt % 100 == 0
 
-    for i = 1, strip_length do
-        local char = (i % 2 == 0) == is_hundred and "-" or "\xB7"
-        write_at(SCREEN_WIDTH, i + y_offset, char)
-    end
-
+    draw_strip(plane.rel_y, SCREEN_WIDTH, y_offset, strip_length, 50)
     write_at(
         SCREEN_WIDTH - 1,
         math.floor((y_offset + strip_length) / 2 + 0.5) + 1,
@@ -399,14 +403,8 @@ end
 local function draw_speed()
     local y_offset = 2
     local strip_length = SCREEN_HEIGHT - 3 -- Heading takes up 2y, Speed takes up 1
-    -- Every 10 m/s is -, every 5 is .
-    local rounded_alt = 5 * math.floor(plane.speed / 5 + 0.5)
-    local is_ten = rounded_alt % 10 == 0
 
-    for i = 1, strip_length do
-        local char = (i % 2 == 0) == is_ten and "-" or "\xB7"
-        write_at(1, i + y_offset, char)
-    end
+    draw_strip(plane.speed, 1, y_offset, strip_length, 5)
 
     local fraction = plane.max_speed ~= 0 and plane.speed / plane.max_speed or 0
     local indicator_height = round(y_offset + strip_length - fraction * strip_length + 1)
@@ -424,22 +422,27 @@ end
 
 local function center_display()
     local self = setmetatable({}, {})
-    self.center_x = round(SCREEN_WIDTH / 2)
-    self.center_y = round(SCREEN_HEIGHT / 2) + 1 -- +1 because heading is 2y, bottom 1y
-    -- These only work in intervals of 2 due to symmetry
-    self.width = SCREEN_WIDTH - 6                -- Width: 4x (spd/alt) + 2x blank,
-    self.height = SCREEN_HEIGHT - 3              -- Height: 2y (heading) + 1 (bottom strip)
 
-    self.min_x = self.center_x - math.floor(self.width / 2)
-    self.max_x = self.center_x + math.ceil(self.width / 2)
-    self.min_y = self.center_y - math.floor(self.height / 2)
-    self.max_y = self.center_y + math.ceil(self.height / 2) - 1 -- forgot why.
+    function self.create()
+        self.center_x = round(SCREEN_WIDTH / 2)
+        self.center_y = round(SCREEN_HEIGHT / 2) + 1 -- +1 because heading is 2y, bottom 1y
+        -- These only work in intervals of 2 due to symmetry
+        self.width = SCREEN_WIDTH - 6                -- Width: 4x (spd/alt) + 2x blank,
+        self.height = SCREEN_HEIGHT - 3              -- Height: 2y (heading) + 1 (bottom strip)
 
-    self.horizon_y = 0
+        self.min_x = self.center_x - math.floor(self.width / 2)
+        self.max_x = self.center_x + math.ceil(self.width / 2)
+        self.min_y = self.center_y - math.floor(self.height / 2)
+        self.max_y = self.center_y + math.ceil(self.height / 2) - 1 -- forgot why.
 
-    self.pitch_values = {}
-    for i = 90, -90, -20 do table.insert(self.pitch_values, i) end
-    self.ladder_spacing = 2
+        self.horizon_y = 0
+
+        self.pitch_values = {}
+        for i = 90, -90, -20 do table.insert(self.pitch_values, i) end
+        self.ladder_spacing = 2
+
+        return self
+    end
 
     function self.draw()
         self.draw_horizon()
@@ -522,8 +525,8 @@ local function hud_displayer()
         -- MONITOR.setTextScale(0.5)
         MONITOR.setPaletteColour(colours.black, HUD_BACKGROUND_COLOUR)
         MONITOR.setBackgroundColour(colours.black)
-        MONITOR.setPaletteColour(colours.lime, HUD_TEXT_COLOUR)
-        MONITOR.setTextColour(colours.lime)
+        MONITOR.setPaletteColour(colours.white, HUD_TEXT_COLOUR)
+        MONITOR.setTextColour(colours.white)
     end
 
     if HOLOGRAM then
@@ -533,7 +536,7 @@ local function hud_displayer()
         HOLOGRAM.SetScale(16 / 120, 16 / (242 + 30))
     end
 
-    local CENTER_DISPLAY = center_display()
+    local CENTER_DISPLAY = center_display().create()
     while true do
         if MONITOR then
             MONITOR.clear()
@@ -642,7 +645,7 @@ end
 
 local display_string = "=][= Flight Hud v" .. VERSION .. " =][="
 print(display_string)
-print(string.rep("-", string.len(display_string)))
+print(string.rep("-", #display_string))
 parallel.waitForAll(main, hud_displayer, sound_player, message_handler)
 
 -- 1x1 monitor resolution is only 7x4 💀
@@ -656,8 +659,8 @@ parallel.waitForAll(main, hud_displayer, sound_player, message_handler)
 -- Priority: new features planned
 -- TODO: total velocity vector
 -- TODO: split the horizon into 2 lines, like huds irl (2x3 I'm thinking --> width//2 -1)
--- TODO: ✨ E N C R Y P T I O N ✨
 
 -- Priority: procrastination
+-- ✨ E N C R Y P T I O N ✨
 -- make hud fully scalable --> scale values like spd/alt (especially pitch ladder) too.
 -- make a better setup video which actually fucking shows files dragging in

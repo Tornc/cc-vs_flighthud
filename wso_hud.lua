@@ -15,8 +15,8 @@ local MODEM = peripheral.find("modem")
     CONSTANTS
 ]]
 
-local HUD_BACKGROUND_COLOUR = 0x000000
-local HUD_TEXT_COLOUR = 0x00FF00
+local HUD_BACKGROUND_COLOUR = colours.packRGB(0, 0, 0) -- Colour is on a scale of 0 (min) to 1 (max).
+local HUD_TEXT_COLOUR = colours.packRGB(0, 1, 0)
 
 local DELTA_TICK = 3
 
@@ -96,11 +96,12 @@ local function round(number, decimal)
     end
 end
 
-local function tbl_to_vec(vector, table)
-    vector.x = table.x or table[1]
-    vector.y = table.y or table[2]
-    vector.z = table.z or table[3]
-    return vector
+local function tbl_to_vec(table)
+    return vector.new(
+        table.x or table[1],
+        table.y or table[2],
+        table.z or table[3]
+    )
 end
 
 --[[
@@ -400,8 +401,8 @@ local function HUD_displayer()
     -- LATER: this is really stupid
     MONITOR.setPaletteColour(colours.black, HUD_BACKGROUND_COLOUR)
     MONITOR.setBackgroundColour(colours.black)
-    MONITOR.setPaletteColour(colours.lime, HUD_TEXT_COLOUR)
-    MONITOR.setTextColour(colours.lime)
+    MONITOR.setPaletteColour(colours.white, HUD_TEXT_COLOUR)
+    MONITOR.setTextColour(colours.white)
 
     current_target = #targets > 0 and targets[1] or nil
 
@@ -438,9 +439,9 @@ local function update_current_target()
 end
 
 local function update_information()
-    plane.pos = tbl_to_vec(plane.pos, ship.getWorldspacePosition())
-    plane.vel = tbl_to_vec(plane.vel, ship.getVelocity())
-    plane.ori = tbl_to_vec(plane.ori,
+    plane.pos = tbl_to_vec(ship.getWorldspacePosition())
+    plane.vel = tbl_to_vec(ship.getVelocity())
+    plane.ori = tbl_to_vec(
         { math.deg(ship.getPitch()), math.deg(ship.getYaw()), math.deg(ship.getRoll()) }
     )
 
@@ -518,6 +519,7 @@ end
 
 parallel.waitForAll(main, HUD_displayer, input_handler, message_handler)
 
+-- TODO: allow all components (from static text level) to have background colour
 -- TODO: allow for button actions to have params (...). reorder colour so it's before action.
 -- Modify every button creation accordingly (add nil)
 
