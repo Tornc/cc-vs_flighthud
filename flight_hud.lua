@@ -1,10 +1,10 @@
 -- Written by Ton, with love. Feel free to modify, consider this under the MIT license.
 
 -- TEST: REMOVE LATER
-local ship = require("fake_ShipAPI")
-periphemu.create("front", "monitor")
-periphemu.create("back", "speaker")
-periphemu.create("top", "modem")
+-- local ship = require("fake_ShipAPI")
+-- periphemu.create("front", "monitor")
+-- periphemu.create("back", "speaker")
+-- periphemu.create("top", "modem")
 local pretty = require("cc.pretty")
 
 --[[
@@ -35,6 +35,7 @@ local GROUND_WARNING_THRESHOLD = 70          --
 local CRITICAL_GROUND_WARNING_THRESHOLD = 30 --
 local G_FORCE_WARNING_THRESHOLD = 8.5        --
 local TARGET_NEARBY_THRESHOLD = 150          -- In blocks. Only useful if flighthud receives messages from wso_comp
+
 local SOUNDS = {                             -- Format: "FILE_NAME", sound cooldown in ticks
     ground_warning = { "ALTITUDE", 150 },
     critical_ground_warning = { "PULL_UP", 60 },
@@ -44,7 +45,8 @@ local SOUNDS = {                             -- Format: "FILE_NAME", sound coold
 local SOUND_VOLUME = 1                                 -- 0.0 to 3.0
 
 local HUD_BACKGROUND_COLOUR = colours.packRGB(0, 0, 0) -- Colour is on a scale of 0 (min) to 1 (max).
-local HUD_TEXT_COLOUR = colours.packRGB(0, 1, 0)
+local HUD_TEXT_COLOUR = colours.packRGB(0, 1, 0)       --
+local TARGET_NEARBY_COLOUR = colours.packRGB(1, 0, 0)  -- Heading indicator will turn this colour when nearby a target
 local SCREEN_WIDTH, SCREEN_HEIGHT = 15, 10             -- Minimum is 15 width, 10 height. Width should be odd!
 -- How often the script runs (3 = once every 3 ticks), increase if the screen flickers a lot (lag)
 local DELTA_TICK = 3
@@ -60,20 +62,19 @@ local GRAVITY_VEC = vector.new(0, -10, 0) -- m/s (I'm using CBC's gravity value)
 local SOUND_EXTENSION_TYPE = "dfpwm"
 local DECODER = dfpwm.make_decoder()
 local DIRECTIONS = { "N", "E", "S", "W" }
--- Voidpower mod's hologram uses GBK character set. See: https://www.fileformat.info/info/charset/GBK/list.htm
+-- Voidpower mod's hologram uses GBK(?) character set.
+-- I'm not sure which one precisely.
 local CC_TO_GBK = {
-    ["\xAF"] = "\\uFE49", -- High line
-    ["\xAB"] = "\\u300A", -- <<
-    ["\xBB"] = "\\u300B", -- >>
-    ["\x1B"] = "\\u2190", -- Left arrow
-    ["\x18"] = "\\u2191", -- Up arrow
-    ["\x1A"] = "\\u2192", -- Right arrow
-    ["\xB7"] = "\\u25A0", -- Central filled square (small-ish)
-    ["\x1E"] = "\\u25B2", -- Up triangle
-    ["\x10"] = "\\u25E2", -- Right triangle (not ideal)
-    ["\x11"] = "\\u25E3", -- Left triangle (not ideal)
-    [","] = "\\u2533",    -- ┳
-    ["|"] = "\\u2503",    -- ┃ (Heavy version of |)
+    ["\xAF"] = "-", -- High line
+    ["\xAB"] = "<", -- <<
+    ["\xBB"] = ">", -- >>
+    ["\x1B"] = "<", -- Left arrow
+    ["\x18"] = "^", -- Up arrow
+    ["\x1A"] = ">", -- Right arrow
+    ["\xB7"] = "*", -- Filled square
+    ["\x1E"] = "^", -- Up triangle
+    ["\x10"] = ">", -- Right triangle
+    ["\x11"] = "<", -- Left triangle
 }
 
 --[[
@@ -317,7 +318,7 @@ end
 local function draw_heading()
     -- Outer arrows, draw on strip level
     local heading_colour = ((MODEM and wso_is_valid) and plane.tgt_distance <= TARGET_NEARBY_THRESHOLD)
-        and colours.red or nil
+        and TARGET_NEARBY_COLOUR or nil
     write_at(1, 2, "\xAB", heading_colour)            -- Left arrow (<<)
     write_at(SCREEN_WIDTH, 2, "\xBB", heading_colour) -- Right arrow (>>)
 
@@ -343,7 +344,7 @@ local function draw_heading()
     end
 
     -- Display the yaw top-mid
-    local string_formatted_yaw = string.format("%03d", plane.ori.y)
+    local string_formatted_yaw = string.format("%03d", plane.ori.y % 360)
     write_at(math.floor(SCREEN_WIDTH / 2), 1, string_formatted_yaw, heading_colour)
 
     local marker_position, marker_symbol
@@ -522,18 +523,24 @@ local function hud_displayer()
     if MONITOR then
         print("Monitor attached.")
         -- TEST: UNCOMMENT LATER
-        -- MONITOR.setTextScale(0.5)
+        MONITOR.setTextScale(0.5)
         MONITOR.setPaletteColour(colours.black, HUD_BACKGROUND_COLOUR)
         MONITOR.setBackgroundColour(colours.black)
         MONITOR.setPaletteColour(colours.white, HUD_TEXT_COLOUR)
         MONITOR.setTextColour(colours.white)
+
+        -- Voidpower mod Glass Screen compat
+        if MONITOR.setTransparentMode then MONITOR.setTransparentMode(true) end
     end
 
     if HOLOGRAM then
         print("Hologram attached.")
         -- A 1x1 hologram has 16x16 pixels.
-        HOLOGRAM.Resize(120, 242 + 30) -- LATER: The 30 will NOT scale well!
-        HOLOGRAM.SetScale(16 / 120, 16 / (242 + 30))
+        HOLOGRAM.Resize(120, 160)
+        HOLOGRAM.SetScale(16 / 120, 16 / 160)
+        -- TODO: depends on NSEW assembly direction!
+        HOLOGRAM.SetTranslation(0, 0, 1.5)
+        HOLOGRAM.SetClearColor(0x00A0FF20) -- Default: 0x00A0FF6F
     end
 
     local CENTER_DISPLAY = center_display().create()
@@ -551,7 +558,7 @@ local function hud_displayer()
             HOLOGRAM.Clear()
             -- Convert frame_buffer to hologram Text() objects
             -- This \n rep shenanigans is really dumb, but putting
-            -- \n at the end doesn't work for some reason.
+            -- \n at the end doesn't work for some reason. (Works at 1024x1024???)
             for y = 1, SCREEN_HEIGHT do
                 HOLOGRAM.Text(
                     0, 0,
@@ -635,7 +642,7 @@ local function main()
         current_time = round(os.epoch("utc") * 0.02) -- Convert milliseconds to ticks
 
         -- TEST: REMOVE LATER
-        ship.run(DELTA_TICK)
+        -- ship.run(DELTA_TICK)
 
         clear_disconnected_ids()
         update_information()
@@ -655,6 +662,7 @@ parallel.waitForAll(main, hud_displayer, sound_player, message_handler)
 -- TODO: NSEW assembly roll/pitch inversion arguments
 -- TODO: Rework G-force (it's completely fucked) + add negative G-force
 -- TODO: Draw to window, this will prevent screen flickering because window acts as a frame buffer.
+-- TODO: all uses of colours.[colour] (aka colours.red or sth) need to be defined up top
 
 -- Priority: new features planned
 -- TODO: total velocity vector
