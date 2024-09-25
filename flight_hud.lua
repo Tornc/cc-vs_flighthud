@@ -28,7 +28,7 @@ local SPEAKER = peripheral.find("speaker")
 ]]
 -- You can touch these
 local GROUND_LEVEL = tonumber(arg[1]) or 0   -- Change this to how high your map's ground level is.
-local INVERT_ROLL = arg[2] == "invert"
+local HUD_SHIPYARD_DIRECTION = string.match(string.upper(arg[2] or ""), "^[NESW]$") or "N"
 local TAKEN_OFF_THRESHOLD = 20               -- How many blocks into the air you need to be for the voice warnings to be enabled
 local LANDED_THRESHOLD = 3                   -- How close to ground level you need to be for the voice warnings to be disabled
 local GROUND_WARNING_THRESHOLD = 70          --
@@ -131,6 +131,13 @@ end
 
 local function clamp(value, min, max)
     return math.min(max, math.max(min, value))
+end
+
+local function index_of(table, value)
+    for i, v in ipairs(table) do
+        if v == value then return i end
+    end
+    return nil
 end
 
 local function round(number, decimal)
@@ -452,12 +459,15 @@ local function center_display()
     end
 
     function self.draw_horizon()
-        -- Calculate horizon line position based on pitch
-        self.horizon_y = self.center_y + math.floor(round(plane.ori.x) * (self.height / 2) / 45)
-
-        -- Calculate roll
+        local rounded_pitch_deg = round(plane.ori.x)
         local rounded_roll_deg = round(plane.ori.z)
-        local roll_rad = INVERT_ROLL and -math.rad(rounded_roll_deg) or math.rad(rounded_roll_deg)
+
+        -- Calculate horizon line position based on pitch
+        self.horizon_y = self.center_y + math.floor(rounded_pitch_deg * (self.height / 2) / 45)
+
+        -- Calculate horizon line tilt based on roll
+        -- local roll_rad = INVERT_ROLL and -math.rad(rounded_roll_deg) or math.rad(rounded_roll_deg)
+        local roll_rad = math.rad(rounded_roll_deg)
         local dx = math.cos(roll_rad) * (self.width / 2)
         local dy = math.sin(roll_rad) * (self.width / 2)
 
@@ -474,10 +484,11 @@ local function center_display()
     end
 
     function self.draw_pitch_ladder()
+        -- Keep in mind, the pitch ladder is dependant on the horizon_y.
         for _, pitch in pairs(self.pitch_values) do
             local y_offset = math.floor(-pitch / 20) * self.ladder_spacing
             local ladder_y = self.horizon_y + y_offset + 1
-            local char = pitch > 0 and "\xAF" or "_"
+            local char = pitch > 0 and "\xAF" or "_" -- High line
 
             -- Left and right side
             self.draw_ladder_line(self.center_x - (2 / 9 * self.width), ladder_y, char)
@@ -538,7 +549,7 @@ local function hud_displayer()
         -- A 1x1 hologram has 16x16 pixels.
         HOLOGRAM.Resize(120, 160)
         HOLOGRAM.SetScale(16 / 120, 16 / 160)
-        -- TODO: depends on NSEW assembly direction!
+        -- TODO: depends on NESW assembly direction!
         HOLOGRAM.SetTranslation(0, 0, 1.5)
         HOLOGRAM.SetClearColor(0x00A0FF20) -- Default: 0x00A0FF6F
     end
@@ -586,6 +597,11 @@ end
 local function update_information()
     local velocity = tbl_to_vec(ship.getVelocity())
     local omega = tbl_to_vec(ship.getOmega())
+    local orientation = vector.new(
+        math.deg(ship.getPitch()),
+        math.deg(ship.getYaw()),
+        math.deg(ship.getRoll())
+    )
 
     local dt = DELTA_TICK * 0.05
     local linear_acc = (velocity - plane.vel) / dt
@@ -597,9 +613,24 @@ local function update_information()
     plane.pos = tbl_to_vec(ship.getWorldspacePosition())
     plane.vel = velocity
     plane.omega = omega
-    plane.ori = tbl_to_vec(
-        { math.deg(ship.getPitch()), math.deg(ship.getYaw()), math.deg(ship.getRoll()) }
-    )
+
+    -- NESW bullshit explanation:
+    -- ShipAPI's orientation will always be based on the orientation a ship is in the shipyard.
+    -- The 'true north' (front) of a ship may not be the same as the front of your build.
+    -- Therefore, if a ship is built facing south, the roll will be inverted. 
+    -- When it’s east, roll becomes inverted pitch and pitch becomes roll.
+    -- When it's west, roll becomes pitch and pitch becomes inverted roll.
+    orientation.y = orientation.y +
+        (90 * (index_of(DIRECTIONS, HUD_SHIPYARD_DIRECTION) - 1) + 180) % 360 - 180
+    if HUD_SHIPYARD_DIRECTION == "S" then
+        orientation.z = -orientation.z
+    elseif HUD_SHIPYARD_DIRECTION == "E" then
+        orientation.z, orientation.x = -orientation.x, orientation.z
+    elseif HUD_SHIPYARD_DIRECTION == "W" then
+        orientation.z, orientation.x = orientation.x, -orientation.z
+    end
+
+    plane.ori = orientation
 
     plane.speed = plane.vel:length()
     plane.max_speed = math.max(plane.speed, plane.max_speed)
@@ -659,10 +690,9 @@ parallel.waitForAll(main, hud_displayer, sound_player, message_handler)
 -- 1x1 monitor resolution at 0.5 scale is 15x10
 
 -- Priority: bugfixing (end it all)
--- TODO: NSEW assembly roll/pitch inversion arguments
+-- TODO: Speed incdicator disappears at 0 speed, should stay at bottom instead
 -- TODO: Rework G-force (it's completely fucked) + add negative G-force
 -- TODO: Draw to window, this will prevent screen flickering because window acts as a frame buffer.
--- TODO: all uses of colours.[colour] (aka colours.red or sth) need to be defined up top
 
 -- Priority: new features planned
 -- TODO: total velocity vector
