@@ -550,8 +550,6 @@ local function hud_displayer()
         -- A 1x1 hologram has 16x16 pixels.
         HOLOGRAM.Resize(120, 160)
         HOLOGRAM.SetScale(16 / 120, 16 / 160)
-        -- TODO: depends on NESW assembly direction!
-        HOLOGRAM.SetTranslation(0, 0, 1.5)
         HOLOGRAM.SetClearColor(0x00A0FF20) -- Default: 0x00A0FF6F
     end
 
