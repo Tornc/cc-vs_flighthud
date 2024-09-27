@@ -1,12 +1,5 @@
 -- Written by Ton, with love. Feel free to modify, consider this under the MIT license.
 
--- TEST: REMOVE LATER
-local ship = require("fake_ShipAPI")
-periphemu.create("front", "monitor")
-periphemu.create("back", "speaker")
-periphemu.create("top", "modem")
-local pretty = require("cc.pretty")
-
 --[[
     MODULES
 ]]
@@ -57,13 +50,14 @@ local WSO_ID = "wso_comp"
 local INCOMING_CHANNEL, OUTGOING_CHANNEL = 6060, 6060
 
 -- No need to touch these
-local VERSION = "5.0-ug"
+local VERSION = "5.0"
 local GRAVITY_VEC = vector.new(0, -10, 0) -- m/s (I'm using CBC's gravity value)
 local SOUND_EXTENSION_TYPE = "dfpwm"
 local DECODER = dfpwm.make_decoder()
 local DIRECTIONS = { "N", "E", "S", "W" }
 -- Voidpower mod's hologram uses GBK(?) character set.
 -- I'm not sure which one precisely.
+-- LATER: figure out which!
 local CC_TO_GBK = {
     ["\xAF"] = "-", -- High line
     ["\xAB"] = "<", -- <<
@@ -87,11 +81,9 @@ local plane = {
     vel = vector.new(),   -- Velocity
     omega = vector.new(), -- Angular velocity
     ori = vector.new(),   -- Orientation: x = pitch, y = yaw, z = roll
-
     -- HUD only
     speed = 0,
     max_speed = 0,
-
     -- HUD + sound
     g_force = 0,
     rel_y = 0,
@@ -397,45 +389,44 @@ local function draw_strip(value, x, y, length, val_scale)
     -- Every [2x value] is -, every [value] is .
     local rounded_value = val_scale * math.floor(value / val_scale + 0.5)
     local is_2x = rounded_value % (2 * val_scale) == 0
-    for i = 1, length do
+    for i = 0, length - 1 do
         local char = (i % 2 == 0) == is_2x and "-" or "\xB7" -- small filled square
         write_at(x, i + y, char)
     end
 end
 
 local function draw_altitude()
-    local y_offset = 2
+    local y_offset = 3
     local strip_length = SCREEN_HEIGHT - 3 -- Heading takes up 2y, Alt takes up 1
 
     draw_strip(plane.rel_y, SCREEN_WIDTH, y_offset, strip_length, 50)
     write_at(
         SCREEN_WIDTH - 1,
-        math.floor((y_offset + strip_length) / 2 + 0.5) + 1,
+        math.floor(y_offset + strip_length / 2),
         "\x10"
     )
     write_at(
         SCREEN_WIDTH - #tostring(round(plane.rel_y)) + 1,
-        y_offset + strip_length + 1,
+        y_offset + strip_length,
         tostring(round(plane.rel_y))
     )
 end
 
 local function draw_speed()
-    local y_offset = 2
+    local y_offset = 3
     local strip_length = SCREEN_HEIGHT - 3 -- Heading takes up 2y, Speed takes up 1
 
     draw_strip(plane.speed, 1, y_offset, strip_length, 5)
 
     local fraction = plane.max_speed ~= 0 and plane.speed / plane.max_speed or 0
-    local indicator_height = round(y_offset + strip_length - fraction * strip_length + 1)
+    local indicator_height = y_offset + strip_length - math.max(1, round(fraction * strip_length))
     write_at(2, indicator_height, "\x11")
 
-    local rounded_speed = round(plane.speed)
-    local rounded_max_speed = round(plane.max_speed)
+    local rounded_speed, rounded_max_speed = round(plane.speed), round(plane.max_speed)
     local string_formatted_speed = string.format("%0" .. #tostring(rounded_max_speed) .. "d", rounded_speed)
     write_at(
         1,
-        y_offset + strip_length + 1,
+        y_offset + strip_length,
         string_formatted_speed .. "|" .. tostring(round(plane.g_force, 1)) .. "G"
     )
 end
@@ -544,8 +535,7 @@ local function hud_displayer()
 
     if MONITOR then
         print("Monitor attached.")
-        -- TEST: UNCOMMENT LATER
-        -- MONITOR.setTextScale(0.5)
+        MONITOR.setTextScale(0.5)
         MONITOR.setPaletteColour(colours.black, HUD_BACKGROUND_COLOUR)
         MONITOR.setBackgroundColour(colours.black)
         MONITOR.setPaletteColour(colours.white, HUD_TEXT_COLOUR)
@@ -689,9 +679,6 @@ local function main()
     while true do
         current_time = round(os.epoch("utc") * 0.02) -- Convert milliseconds to ticks
 
-        -- TEST: REMOVE LATER
-        ship.run(DELTA_TICK)
-
         clear_disconnected_ids()
         update_information()
         sleep(DELTA_TICK / 20)
@@ -706,15 +693,13 @@ parallel.waitForAll(main, hud_displayer, sound_player, message_handler)
 -- 1x1 monitor resolution is only 7x4 💀
 -- 1x1 monitor resolution at 0.5 scale is 15x10
 
--- Priority: bugfixing (end it all)
--- TODO: Speed incdicator disappears at 0 speed, should stay at bottom instead
--- TODO: Draw to window, this will prevent screen flickering because window acts as a frame buffer.
-
 -- Priority: new features planned
 -- TODO: total velocity vector
 -- TODO: split the horizon into 2 lines, like huds irl (2x3 I'm thinking --> width//2 -1)
 
 -- Priority: procrastination
 -- ✨ E N C R Y P T I O N ✨
--- make hud fully scalable --> scale values like spd/alt (especially pitch ladder) too.
--- make a better setup video which actually fucking shows files dragging in
+-- Draw to window, this will prevent screen flickering because window acts as a frame buffer.
+-- Make hud fully scalable --> scale values like spd/alt (especially pitch ladder) too.
+-- Make a proper wiki with setup and explanation of the quirks and what the HUD elements
+-- actually mean.
