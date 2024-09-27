@@ -1,5 +1,11 @@
 -- Written by Ton, with love. Feel free to modify, consider this under the MIT license.
 
+-- TEST: REMOVE LATER
+local ship = require("fake_ShipAPI")
+periphemu.create("front", "monitor")
+periphemu.create("top", "modem")
+local pretty = require("cc.pretty")
+
 --[[
     PERIPHERALS
 ]]
@@ -51,6 +57,12 @@ local inbox, old_inbox = {}, {}
 local outgoing_message = { ["id"] = MY_ID }
 local targets = {}
 local current_target
+-- TEST: remove later
+targets = {
+    { name = "alpha",   pos = vector.new(1000, 0, 1000) },
+    { name = "bravo",   pos = vector.new(3000, -500, 0) },
+    { name = "charlie", pos = vector.new(5000, 2500, -340) },
+}
 local mouse_x, mouse_y = 0, 0
 
 --[[
@@ -406,6 +418,7 @@ end
 local function HUD_displayer()
     if not MONITOR then return end
     print("Monitor attached.")
+    -- TEST: UNCOMMENT LATER
     MONITOR.setTextScale(0.5)
     MONITOR.setPaletteColour(colours.black, HUD_BACKGROUND_COLOUR)
     MONITOR.setBackgroundColour(colours.black)
@@ -522,6 +535,9 @@ local function main()
     print("Shipyard direction:", SHIPYARD_DIRECTION)
     while true do
         current_time = round(os.epoch("utc") * 0.02) -- Convert milliseconds to ticks
+
+        -- TEST: REMOVE LATER
+        ship.run(DELTA_TICK)
 
         clear_disconnected_ids()
         update_information()

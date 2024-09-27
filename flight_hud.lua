@@ -1,5 +1,12 @@
 -- Written by Ton, with love. Feel free to modify, consider this under the MIT license.
 
+-- TEST: REMOVE LATER
+local ship = require("fake_ShipAPI")
+periphemu.create("front", "monitor")
+periphemu.create("back", "speaker")
+periphemu.create("top", "modem")
+local pretty = require("cc.pretty")
+
 --[[
     MODULES
 ]]
@@ -535,7 +542,8 @@ local function hud_displayer()
 
     if MONITOR then
         print("Monitor attached.")
-        MONITOR.setTextScale(0.5)
+        -- TEST: UNCOMMENT LATER
+        -- MONITOR.setTextScale(0.5)
         MONITOR.setPaletteColour(colours.black, HUD_BACKGROUND_COLOUR)
         MONITOR.setBackgroundColour(colours.black)
         MONITOR.setPaletteColour(colours.white, HUD_TEXT_COLOUR)
@@ -550,6 +558,8 @@ local function hud_displayer()
         -- A 1x1 hologram has 16x16 pixels.
         HOLOGRAM.Resize(120, 160)
         HOLOGRAM.SetScale(16 / 120, 16 / 160)
+        -- TODO: depends on NESW assembly direction!
+        HOLOGRAM.SetTranslation(0, 0, 1.5)
         HOLOGRAM.SetClearColor(0x00A0FF20) -- Default: 0x00A0FF6F
     end
 
@@ -676,6 +686,9 @@ local function main()
     print("Shipyard direction:", SHIPYARD_DIRECTION)
     while true do
         current_time = round(os.epoch("utc") * 0.02) -- Convert milliseconds to ticks
+
+        -- TEST: REMOVE LATER
+        ship.run(DELTA_TICK)
 
         clear_disconnected_ids()
         update_information()
