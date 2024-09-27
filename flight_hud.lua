@@ -1,10 +1,10 @@
 -- Written by Ton, with love. Feel free to modify, consider this under the MIT license.
 
 -- TEST: REMOVE LATER
--- local ship = require("fake_ShipAPI")
--- periphemu.create("front", "monitor")
--- periphemu.create("back", "speaker")
--- periphemu.create("top", "modem")
+local ship = require("fake_ShipAPI")
+periphemu.create("front", "monitor")
+periphemu.create("back", "speaker")
+periphemu.create("top", "modem")
 local pretty = require("cc.pretty")
 
 --[[
@@ -28,7 +28,7 @@ local SPEAKER = peripheral.find("speaker")
 ]]
 -- You can touch these
 local GROUND_LEVEL = tonumber(arg[1]) or 0   -- Change this to how high your map's ground level is.
-local HUD_SHIPYARD_DIRECTION = string.match(string.upper(arg[2] or ""), "^[NESW]$") or "N"
+local SHIPYARD_DIRECTION = string.match(string.upper(arg[2] or ""), "^[NESW]$") or "N"
 local TAKEN_OFF_THRESHOLD = 20               -- How many blocks into the air you need to be for the voice warnings to be enabled
 local LANDED_THRESHOLD = 3                   -- How close to ground level you need to be for the voice warnings to be disabled
 local GROUND_WARNING_THRESHOLD = 70          --
@@ -131,6 +131,18 @@ end
 
 local function clamp(value, min, max)
     return math.min(max, math.max(min, value))
+end
+
+local function format_time(seconds)
+    if seconds < 1000 then
+        return string.format("%ds", seconds)
+    elseif seconds < 60000 then
+        local minutes = math.floor(seconds / 60)
+        return string.format("%dm", minutes)
+    else
+        local hours = math.floor(seconds / 3600)
+        return string.format("%dh", hours)
+    end
 end
 
 local function index_of(table, value)
@@ -466,7 +478,6 @@ local function center_display()
         self.horizon_y = self.center_y + math.floor(rounded_pitch_deg * (self.height / 2) / 45)
 
         -- Calculate horizon line tilt based on roll
-        -- local roll_rad = INVERT_ROLL and -math.rad(rounded_roll_deg) or math.rad(rounded_roll_deg)
         local roll_rad = math.rad(rounded_roll_deg)
         local dx = math.cos(roll_rad) * (self.width / 2)
         local dy = math.sin(roll_rad) * (self.width / 2)
@@ -534,7 +545,7 @@ local function hud_displayer()
     if MONITOR then
         print("Monitor attached.")
         -- TEST: UNCOMMENT LATER
-        MONITOR.setTextScale(0.5)
+        -- MONITOR.setTextScale(0.5)
         MONITOR.setPaletteColour(colours.black, HUD_BACKGROUND_COLOUR)
         MONITOR.setBackgroundColour(colours.black)
         MONITOR.setPaletteColour(colours.white, HUD_TEXT_COLOUR)
@@ -595,6 +606,7 @@ end
 ]]
 
 local function update_information()
+    local position = tbl_to_vec(ship.getWorldspacePosition())
     local velocity = tbl_to_vec(ship.getVelocity())
     local omega = tbl_to_vec(ship.getOmega())
     local orientation = vector.new(
@@ -603,30 +615,33 @@ local function update_information()
         math.deg(ship.getRoll())
     )
 
+    -- G-force
     local dt = DELTA_TICK * 0.05
     local linear_acc = (velocity - plane.vel) / dt
-    local angular_acc = (omega - plane.omega) / dt
-    local combined_acc = linear_acc + angular_acc + GRAVITY_VEC
+    local centripetal_acc = omega:cross(velocity)
+    local total_acc = linear_acc + centripetal_acc + GRAVITY_VEC
+    local g_force_magnitude = total_acc:length() / GRAVITY_VEC:length()
+    local g_force_sign = total_acc:dot(GRAVITY_VEC) < 0 and -1 or 1
 
-    plane.g_force = combined_acc:length() / GRAVITY_VEC:length()
+    plane.g_force = g_force_sign * g_force_magnitude
 
-    plane.pos = tbl_to_vec(ship.getWorldspacePosition())
+    plane.pos = position
     plane.vel = velocity
     plane.omega = omega
 
     -- NESW bullshit explanation:
     -- ShipAPI's orientation will always be based on the orientation a ship is in the shipyard.
     -- The 'true north' (front) of a ship may not be the same as the front of your build.
-    -- Therefore, if a ship is built facing south, the roll will be inverted. 
+    -- Therefore, if a ship is built facing south, the roll will be inverted.
     -- When it’s east, roll becomes inverted pitch and pitch becomes roll.
     -- When it's west, roll becomes pitch and pitch becomes inverted roll.
     orientation.y = orientation.y +
-        (90 * (index_of(DIRECTIONS, HUD_SHIPYARD_DIRECTION) - 1) + 180) % 360 - 180
-    if HUD_SHIPYARD_DIRECTION == "S" then
+        (90 * (index_of(DIRECTIONS, SHIPYARD_DIRECTION) - 1) + 180) % 360 - 180
+    if SHIPYARD_DIRECTION == "S" then
         orientation.z = -orientation.z
-    elseif HUD_SHIPYARD_DIRECTION == "E" then
+    elseif SHIPYARD_DIRECTION == "E" then
         orientation.z, orientation.x = -orientation.x, orientation.z
-    elseif HUD_SHIPYARD_DIRECTION == "W" then
+    elseif SHIPYARD_DIRECTION == "W" then
         orientation.z, orientation.x = orientation.x, -orientation.z
     end
 
@@ -669,11 +684,13 @@ local function update_information()
 end
 
 local function main()
+    print("Ground level:", GROUND_LEVEL)
+    print("Shipyard direction:", SHIPYARD_DIRECTION)
     while true do
         current_time = round(os.epoch("utc") * 0.02) -- Convert milliseconds to ticks
 
         -- TEST: REMOVE LATER
-        -- ship.run(DELTA_TICK)
+        ship.run(DELTA_TICK)
 
         clear_disconnected_ids()
         update_information()
@@ -691,7 +708,6 @@ parallel.waitForAll(main, hud_displayer, sound_player, message_handler)
 
 -- Priority: bugfixing (end it all)
 -- TODO: Speed incdicator disappears at 0 speed, should stay at bottom instead
--- TODO: Rework G-force (it's completely fucked) + add negative G-force
 -- TODO: Draw to window, this will prevent screen flickering because window acts as a frame buffer.
 
 -- Priority: new features planned

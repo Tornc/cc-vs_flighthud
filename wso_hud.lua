@@ -14,6 +14,7 @@ local MODEM = peripheral.find("modem")
 --[[
     CONSTANTS
 ]]
+local SHIPYARD_DIRECTION = string.match(string.upper(arg[1] or ""), "^[NESW]$") or "N"
 
 local HUD_BACKGROUND_COLOUR = colours.packRGB(0, 0, 0) -- Colour is on a scale of 0 (min) to 1 (max).
 local HUD_TEXT_COLOUR = colours.packRGB(0, 1, 0)
@@ -25,7 +26,9 @@ local DESIGNATOR_ID = "i_am_a_designator"
 local INCOMING_CHANNEL, OUTGOING_CHANNEL = 6060, 6060
 
 -- No need to touch these
+local VERSION = "1.1-pre"
 local SCREEN_WIDTH, SCREEN_HEIGHT = 15, 10
+local DIRECTIONS = { "N", "E", "S", "W" }
 
 --[[
     STATE VARIABLES
@@ -87,6 +90,13 @@ local function format_time(seconds)
     end
 end
 
+local function index_of(table, value)
+    for i, v in ipairs(table) do
+        if v == value then return i end
+    end
+    return nil
+end
+
 local function round(number, decimal)
     if decimal then
         local fmt_str = "%." .. decimal .. "f"
@@ -94,6 +104,16 @@ local function round(number, decimal)
     else
         return math.floor(number + 0.5)
     end
+end
+
+local function run_async(func, ...)
+    local args = { ... }
+    local co = coroutine.create(
+        function()
+            func(unpack(args))
+        end
+    )
+    coroutine.resume(co)
 end
 
 local function tbl_to_vec(table)
@@ -439,11 +459,28 @@ local function update_current_target()
 end
 
 local function update_information()
-    plane.pos = tbl_to_vec(ship.getWorldspacePosition())
-    plane.vel = tbl_to_vec(ship.getVelocity())
-    plane.ori = tbl_to_vec(
-        { math.deg(ship.getPitch()), math.deg(ship.getYaw()), math.deg(ship.getRoll()) }
+    local position = tbl_to_vec(ship.getWorldspacePosition())
+    local velocity = tbl_to_vec(ship.getVelocity())
+    local orientation = vector.new(
+        math.deg(ship.getPitch()),
+        math.deg(ship.getYaw()),
+        math.deg(ship.getRoll())
     )
+
+    -- NESW bullshit, see flighthud for explanation
+    orientation.y = orientation.y +
+        (90 * (index_of(DIRECTIONS, SHIPYARD_DIRECTION) - 1) + 180) % 360 - 180
+    if SHIPYARD_DIRECTION == "S" then
+        orientation.z = -orientation.z
+    elseif SHIPYARD_DIRECTION == "E" then
+        orientation.z, orientation.x = -orientation.x, orientation.z
+    elseif SHIPYARD_DIRECTION == "W" then
+        orientation.z, orientation.x = orientation.x, -orientation.z
+    end
+
+    plane.pos = position
+    plane.vel = velocity
+    plane.ori = orientation
 
     plane.speed = plane.vel:length()
     plane.max_speed = math.max(plane.speed, plane.max_speed)
@@ -494,6 +531,7 @@ local function update_information()
 end
 
 local function main()
+    print("Shipyard direction:", SHIPYARD_DIRECTION)
     while true do
         current_time = round(os.epoch("utc") * 0.02) -- Convert milliseconds to ticks
 
@@ -517,6 +555,9 @@ local function main()
     end
 end
 
+local display_string = "=][= WSO Hud v" .. VERSION .. " =][="
+print(display_string)
+print(string.rep("-", #display_string))
 parallel.waitForAll(main, HUD_displayer, input_handler, message_handler)
 
 -- TODO: allow all components (from static text level) to have background colour
