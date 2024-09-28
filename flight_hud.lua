@@ -87,7 +87,7 @@ local plane = {
     pos = vector.new(),   -- Position
     vel = vector.new(),   -- Velocity
     omega = vector.new(), -- Angular velocity
-    ori = vector.new(),   -- Orientation: x = pitch, y = yaw, z = roll
+    ori = vector.new(),   -- Orientation: x = roll, y = pitch, z = yaw
     -- HUD only
     speed = 0,
     max_speed = 0,
@@ -340,7 +340,7 @@ local function draw_heading()
     write_at(1, 2, "\xAB", heading_colour)            -- Left arrow (<<)
     write_at(SCREEN_WIDTH, 2, "\xBB", heading_colour) -- Right arrow (>>)
 
-    local yaw_offset = math.floor(plane.ori.y / 10 + 0.5)
+    local yaw_offset = math.floor(plane.ori.z / 10 + 0.5)
     local adjustment = 2
     for i = 0, SCREEN_WIDTH - 2 * adjustment + 1 do
         local x = i + adjustment
@@ -362,13 +362,13 @@ local function draw_heading()
     end
 
     -- Display the yaw top-mid
-    local string_formatted_yaw = string.format("%03d", plane.ori.y % 360)
+    local string_formatted_yaw = string.format("%03d", plane.ori.z % 360)
     write_at(math.floor(SCREEN_WIDTH / 2), 1, string_formatted_yaw, heading_colour)
 
     local marker_position, marker_symbol
     if MODEM and wso_is_valid then
         -- Display the marker according to the target yaw
-        local yaw_difference = (plane.tgt_yaw - plane.ori.y + 180) % 360 - 180
+        local yaw_difference = (plane.tgt_yaw - plane.ori.z + 180) % 360 - 180
         local ideal_position = math.floor(SCREEN_WIDTH / 2 + yaw_difference / 10 + 0.5)
 
         local min_x = 3
@@ -444,14 +444,15 @@ local function center_display()
     function self.create()
         self.center_x = round(SCREEN_WIDTH / 2)
         self.center_y = round(SCREEN_HEIGHT / 2) + 1 -- +1 because heading is 2y, bottom 1y
+        -- LATER: honestly, this +1 is just bad code on my part.
         -- These only work in intervals of 2 due to symmetry
-        self.width = SCREEN_WIDTH - 6                -- Width: 4x (spd/alt) + 2x blank,
-        self.height = SCREEN_HEIGHT - 3              -- Height: 2y (heading) + 1 (bottom strip)
+        self.width = SCREEN_WIDTH - 6   -- Width: 4x (spd/alt) + 2x blank,
+        self.height = SCREEN_HEIGHT - 3 -- Height: 2y (heading) + 1 (bottom strip)
 
         self.min_x = self.center_x - math.floor(self.width / 2)
         self.max_x = self.center_x + math.ceil(self.width / 2)
         self.min_y = self.center_y - math.floor(self.height / 2)
-        self.max_y = self.center_y + math.ceil(self.height / 2) - 1 -- forgot why.
+        self.max_y = self.center_y + math.ceil(self.height / 2) - 1 -- because of center_y + 1
 
         self.horizon_y = 0
 
@@ -469,8 +470,8 @@ local function center_display()
     end
 
     function self.draw_horizon()
-        local rounded_pitch_deg = round(plane.ori.x)
-        local rounded_roll_deg = round(plane.ori.z)
+        local rounded_pitch_deg = round(plane.ori.y)
+        local rounded_roll_deg = round(plane.ori.x)
 
         -- Calculate horizon line position based on pitch
         self.horizon_y = self.center_y + math.floor(rounded_pitch_deg * (self.height / 2) / 45)
@@ -608,9 +609,9 @@ local function update_information()
     local velocity = tbl_to_vec(ship.getVelocity())
     local omega = tbl_to_vec(ship.getOmega())
     local orientation = vector.new(
+        math.deg(ship.getRoll()),
         math.deg(ship.getPitch()),
-        math.deg(ship.getYaw()),
-        math.deg(ship.getRoll())
+        math.deg(ship.getYaw())
     )
 
     -- G-force
@@ -630,17 +631,17 @@ local function update_information()
     -- NESW bullshit explanation:
     -- ShipAPI's orientation will always be based on the orientation a ship is in the shipyard.
     -- The 'true north' (front) of a ship may not be the same as the front of your build.
+    -- Shift yaw by 90 degrees accordingly. N = +0, E = +90, S = +180, W = +270.
     -- Therefore, if a ship is built facing south, the roll will be inverted.
     -- When it’s east, roll becomes inverted pitch and pitch becomes roll.
     -- When it's west, roll becomes pitch and pitch becomes inverted roll.
-    orientation.y = orientation.y +
-        (90 * (index_of(DIRECTIONS, SHIPYARD_DIRECTION) - 1) + 180) % 360 - 180
+    orientation.z = orientation.z + (90 * (index_of(DIRECTIONS, SHIPYARD_DIRECTION) - 1) + 180) % 360 - 180
     if SHIPYARD_DIRECTION == "S" then
-        orientation.z = -orientation.z
+        orientation.x = -orientation.x
     elseif SHIPYARD_DIRECTION == "E" then
-        orientation.z, orientation.x = -orientation.x, orientation.z
+        orientation.x, orientation.y = -orientation.y, orientation.x
     elseif SHIPYARD_DIRECTION == "W" then
-        orientation.z, orientation.x = orientation.x, -orientation.z
+        orientation.x, orientation.y = orientation.y, -orientation.x
     end
 
     plane.ori = orientation
@@ -707,6 +708,10 @@ parallel.waitForAll(main, hud_displayer, sound_player, message_handler)
 -- Priority: new features planned
 -- TODO: total velocity vector
 -- TODO: split the horizon into 2 lines, like huds irl (2x3 I'm thinking --> width//2 -1)
+-- TODO: config file: if no config, prompt for answers with read()
+--                    run arg[1] "settings" to get config screen again.
+--                    look into default answers --> https://tweaked.cc/library/cc.completion.html
+--                    autocomplete: north, east, south, west
 
 -- Priority: procrastination
 -- ✨ E N C R Y P T I O N ✨

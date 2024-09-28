@@ -40,17 +40,15 @@ local current_time = 0
 local plane = {
     pos = vector.new(),  -- Position
     vel = vector.new(),  -- Velocity
-    ori = vector.new(),  -- Orientation: x = pitch, y = yaw, z = roll
+    ori = vector.new(),  -- Orientation: x = roll, y = pitch, z = yaw
     dpos = vector.new(), -- Difference in XYZ between plane and target
 
-    speed = 0,
-    max_speed = 0,
-
-    tyaw = 0, -- Yaw and pitch required to face the target
+    tyaw = 0,            -- Yaw and pitch required to face the target
     tpitch = 0,
-    dyaw = 0,
+    dyaw = 0,            -- How far off you are from facing the target
     dpitch = 0,
 
+    speed = 0,
     eta = 0, -- Time of arrival in seconds
 }
 local inbox, old_inbox = {}, {}
@@ -419,7 +417,7 @@ local function HUD_displayer()
     if not MONITOR then return end
     print("Monitor attached.")
     -- TEST: UNCOMMENT LATER
-    MONITOR.setTextScale(0.5)
+    -- MONITOR.setTextScale(0.5)
     MONITOR.setPaletteColour(colours.black, HUD_BACKGROUND_COLOUR)
     MONITOR.setBackgroundColour(colours.black)
     MONITOR.setPaletteColour(colours.white, HUD_TEXT_COLOUR)
@@ -463,28 +461,24 @@ local function update_information()
     local position = tbl_to_vec(ship.getWorldspacePosition())
     local velocity = tbl_to_vec(ship.getVelocity())
     local orientation = vector.new(
+        math.deg(ship.getRoll()),
         math.deg(ship.getPitch()),
-        math.deg(ship.getYaw()),
-        math.deg(ship.getRoll())
+        math.deg(ship.getYaw())
     )
 
     -- NESW bullshit, see flighthud for explanation
-    orientation.y = orientation.y +
-        (90 * (index_of(DIRECTIONS, SHIPYARD_DIRECTION) - 1) + 180) % 360 - 180
+    orientation.z = orientation.z + (90 * (index_of(DIRECTIONS, SHIPYARD_DIRECTION) - 1) + 180) % 360 - 180
     if SHIPYARD_DIRECTION == "S" then
-        orientation.z = -orientation.z
+        orientation.x = -orientation.x
     elseif SHIPYARD_DIRECTION == "E" then
-        orientation.z, orientation.x = -orientation.x, orientation.z
+        orientation.x, orientation.y = -orientation.y, orientation.x
     elseif SHIPYARD_DIRECTION == "W" then
-        orientation.z, orientation.x = orientation.x, -orientation.z
+        orientation.x, orientation.y = orientation.y, -orientation.x
     end
 
     plane.pos = position
     plane.vel = velocity
     plane.ori = orientation
-
-    plane.speed = plane.vel:length()
-    plane.max_speed = math.max(plane.speed, plane.max_speed)
 
     if current_target then
         plane.dpos = current_target.pos - plane.pos
@@ -493,10 +487,11 @@ local function update_information()
         plane.tyaw = (plane.tyaw + 360) % 360
         plane.tpitch = math.deg(math.atan2(plane.dpos.y, math.sqrt(plane.dpos.x ^ 2 + plane.dpos.z ^ 2)))
 
-        plane.dyaw = plane.tyaw - plane.ori.y
-        plane.dpitch = plane.tpitch - plane.ori.x
+        plane.dyaw = plane.tyaw - plane.ori.z
+        plane.dpitch = plane.tpitch - plane.ori.y
 
-        plane.eta = plane.dpos:length() / (plane.speed ~= 0 and plane.speed or nil)
+        plane.speed = plane.vel:length()
+        plane.eta = plane.speed ~= 0 and plane.dpos:length() / plane.speed or nil
     end
 
     if MODEM then
