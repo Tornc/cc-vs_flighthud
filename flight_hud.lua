@@ -441,6 +441,20 @@ end
 local function center_display()
     local self = setmetatable({}, {})
 
+    local function clip_point(x, y)
+        return clamp(x, self.min_x, self.max_x), clamp(y, self.min_y, self.max_y)
+    end
+
+    local function draw_ladder_line(x, y, char, pitch)
+        if y >= self.min_y and y <= self.max_y then
+            write_at(x, y, char)
+            if pitch then
+                local formatted_number = string.format("% 2d", pitch / 10)
+                write_at(x + 1, y, formatted_number)
+            end
+        end
+    end
+
     function self.create()
         self.center_x = round(SCREEN_WIDTH / 2)
         self.center_y = round(SCREEN_HEIGHT / 2) + 1 -- +1 because heading is 2y, bottom 1y
@@ -463,12 +477,6 @@ local function center_display()
         return self
     end
 
-    function self.draw()
-        self.draw_horizon()
-        self.draw_pitch_ladder()
-        self.draw_center_marker()
-    end
-
     function self.draw_horizon()
         local rounded_pitch_deg = round(plane.ori.y)
         local rounded_roll_deg = round(plane.ori.x)
@@ -486,8 +494,8 @@ local function center_display()
         local x2 = math.floor(self.center_x + dx)
         local y2 = math.floor(self.horizon_y + dy)
 
-        x1, y1 = self.clip_point(x1, y1)
-        x2, y2 = self.clip_point(x2, y2)
+        x1, y1 = clip_point(x1, y1)
+        x2, y2 = clip_point(x2, y2)
 
         -- Draw the horizon line
         plot_line(x1, y1, x2, y2)
@@ -501,8 +509,8 @@ local function center_display()
             local char = pitch > 0 and "\xAF" or "_" -- High line
 
             -- Left and right side
-            self.draw_ladder_line(self.center_x - (2 / 9 * self.width), ladder_y, char)
-            self.draw_ladder_line(self.center_x + (2 / 9 * self.width), ladder_y, char, pitch)
+            draw_ladder_line(self.center_x - (2 / 9 * self.width), ladder_y, char)
+            draw_ladder_line(self.center_x + (2 / 9 * self.width), ladder_y, char, pitch)
         end
 
         if wso_is_valid then
@@ -512,27 +520,24 @@ local function center_display()
             target_y = clamp(target_y, self.min_x, self.max_y)
 
             -- Draw the marker
-            self.draw_ladder_line(self.center_x - 2, target_y, "\xBB")
+            draw_ladder_line(self.center_x - 2, target_y, "\xBB")
         end
     end
 
-    function self.draw_center_marker()
-        write_at(self.center_x, self.center_y, "+")
-    end
+    function self.draw_total_velocity_vector()
+        local max_x = math.floor(self.width / 2)
+        local max_y = math.floor(self.height / 2)
 
-    -- Clip a line to stay within bounds
-    function self.clip_point(x, y)
-        return clamp(x, self.min_x, self.max_x), clamp(y, self.min_y, self.max_y)
-    end
+        local scaled_vz = plane.max_speed ~= 0 and round(plane.vel.z / plane.max_speed * max_x) or 0
+        local scaled_vy = plane.max_speed ~= 0 and round(plane.vel.y / plane.max_speed * max_y) or 0
 
-    function self.draw_ladder_line(x, y, char, pitch)
-        if y >= self.min_y and y <= self.max_y then
-            write_at(x, y, char)
-            if pitch then
-                local formatted_number = string.format("% 2d", pitch / 10)
-                write_at(x + 1, y, formatted_number)
-            end
-        end
+        local tvv_x = clamp(self.center_x + scaled_vz, self.min_x, self.max_x)
+        local tvv_y = clamp(self.center_y - scaled_vy, self.min_y, self.max_y)
+
+        -- TODO: decide!
+        -- write_at(self.center_x, self.center_y, "+")
+        -- write_at(tvv_x, tvv_y, "+")
+        write_at(tvv_x, tvv_y, "\x05") -- ^=_ symbol, idk what to call it.
     end
 
     return self
@@ -570,8 +575,10 @@ local function hud_displayer()
             MONITOR.clear()
         end
 
-        CENTER_DISPLAY.draw()
+        CENTER_DISPLAY.draw_horizon()
+        CENTER_DISPLAY.draw_pitch_ladder()
         draw_heading()
+        CENTER_DISPLAY.draw_total_velocity_vector()
         draw_altitude()
         draw_speed()
 
@@ -706,7 +713,6 @@ parallel.waitForAll(main, hud_displayer, sound_player, message_handler)
 -- 1x1 monitor resolution at 0.5 scale is 15x10
 
 -- Priority: new features planned
--- TODO: total velocity vector
 -- TODO: split the horizon into 2 lines, like huds irl (2x3 I'm thinking --> width//2 -1)
 -- TODO: config file: if no config, prompt for answers with read()
 --                    run arg[1] "settings" to get config screen again.
