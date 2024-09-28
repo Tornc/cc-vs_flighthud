@@ -295,44 +295,6 @@ local function write_at(x, y, text, colour)
 end
 
 -- Consider this function as copied from Endal
--- https://en.wikipedia.org/wiki/Bresenham%27s_line_algorithm
-local LINE_TYPES = { "\xAF", "-", "_", "|" } -- High, middle, low, vertical.
-local function plot_line(x0, y0, x1, y1)
-    y1 = math.floor(y1 * (#LINE_TYPES - 1) + 1)
-    y0 = math.floor(y0 * (#LINE_TYPES - 1) + 1)
-    x1 = math.floor(x1)
-    x0 = math.floor(x0)
-    local dx = math.abs(x1 - x0)
-    local sx = x0 < x1 and 1 or -1
-    local dy = -math.abs(y1 - y0)
-    local sy = y0 < y1 and 1 or -1
-    local error = dx + dy
-
-    while true do
-        local char = dx < 3 and
-            LINE_TYPES[#LINE_TYPES] or
-            LINE_TYPES[math.floor(y0 % (#LINE_TYPES - 1)) + 1]
-        write_at(
-            x0,
-            math.floor(y0 / (#LINE_TYPES - 1)),
-            char
-        )
-        if x0 == x1 and y0 == y1 then break end
-        local e2 = 2 * error
-        if e2 >= dy then
-            if x0 == x1 then break end
-            error = error + dy
-            x0 = x0 + sx
-        end
-        if e2 <= dx then
-            if y0 == y1 then break end
-            error = error + dx
-            y0 = y0 + sy
-        end
-    end
-end
-
--- Consider this function as copied from Endal
 local function draw_heading()
     -- Outer arrows, draw on strip level
     local heading_colour = ((MODEM and wso_is_valid) and plane.tgt_distance <= TARGET_NEARBY_THRESHOLD)
@@ -445,6 +407,58 @@ local function center_display()
         return clamp(x, self.min_x, self.max_x), clamp(y, self.min_y, self.max_y)
     end
 
+    -- https://en.wikipedia.org/wiki/Bresenham%27s_line_algorithm
+    -- Accepts an additional parameter (gap) if you want the line split into 2.
+    local LINE_TYPES = { "\xAF", "-", "_", "|" } -- High, middle, low, vertical.
+    local function plot_horizon_line(x0, y0, x1, y1, gap)
+        gap = gap or 0
+
+        y1 = math.floor(y1 * (#LINE_TYPES - 1) + 1)
+        y0 = math.floor(y0 * (#LINE_TYPES - 1) + 1)
+        x1 = math.floor(x1)
+        x0 = math.floor(x0)
+        local dx = math.abs(x1 - x0)
+        local sx = x0 < x1 and 1 or -1
+        local dy = -math.abs(y1 - y0)
+        local sy = y0 < y1 and 1 or -1
+        local error = dx + dy
+
+        local total_steps = math.max(dx, math.abs(y1 - y0)) + 1
+        local half_gap = math.floor(gap / 2)
+        local gap_start = math.floor(total_steps / 2) - half_gap
+        local gap_end = gap_start + gap - 1
+
+        local step = 0
+        while true do
+            if step < gap_start or step > gap_end then
+                local char = dx < 3 and
+                    LINE_TYPES[#LINE_TYPES] or
+                    LINE_TYPES[math.floor(y0 % (#LINE_TYPES - 1)) + 1]
+                write_at(
+                    x0,
+                    math.floor(y0 / (#LINE_TYPES - 1)),
+                    char
+                )
+            end
+
+            if x0 == x1 and y0 == y1 then break end
+            local e2 = 2 * error
+            if e2 >= dy then
+                if x0 == x1 then break end
+                error = error + dy
+                x0 = x0 + sx
+            end
+            if e2 <= dx then
+                if y0 == y1 then break end
+                error = error + dx
+                y0 = y0 + sy
+            end
+
+            step = step + 1
+        end
+    end
+
+
     local function draw_ladder_line(x, y, char, pitch)
         if y >= self.min_y and y <= self.max_y then
             write_at(x, y, char)
@@ -460,7 +474,7 @@ local function center_display()
         self.center_y = round(SCREEN_HEIGHT / 2) + 1 -- +1 because heading is 2y, bottom 1y
         -- LATER: honestly, this +1 is just bad code on my part.
         -- These only work in intervals of 2 due to symmetry
-        self.width = SCREEN_WIDTH - 6   -- Width: 4x (spd/alt) + 2x blank,
+        self.width = SCREEN_WIDTH - 6   -- Width: 4x (spd/alt) + 2x blank
         self.height = SCREEN_HEIGHT - 3 -- Height: 2y (heading) + 1 (bottom strip)
 
         self.min_x = self.center_x - math.floor(self.width / 2)
@@ -469,6 +483,7 @@ local function center_display()
         self.max_y = self.center_y + math.ceil(self.height / 2) - 1 -- because of center_y + 1
 
         self.horizon_y = 0
+        self.horizon_gap = 0 -- Honestly idk if a gap looks better.
 
         self.pitch_values = {}
         for i = 90, -90, -20 do table.insert(self.pitch_values, i) end
@@ -498,7 +513,7 @@ local function center_display()
         x2, y2 = clip_point(x2, y2)
 
         -- Draw the horizon line
-        plot_line(x1, y1, x2, y2)
+        plot_horizon_line(x1, y1, x2, y2, self.horizon_gap)
     end
 
     function self.draw_pitch_ladder()
@@ -509,8 +524,8 @@ local function center_display()
             local char = pitch > 0 and "\xAF" or "_" -- High line
 
             -- Left and right side
-            draw_ladder_line(self.center_x - (2 / 9 * self.width), ladder_y, char)
-            draw_ladder_line(self.center_x + (2 / 9 * self.width), ladder_y, char, pitch)
+            draw_ladder_line(self.center_x - round(2 / 9 * self.width), ladder_y, char)
+            draw_ladder_line(self.center_x + round(2 / 9 * self.width), ladder_y, char, pitch)
         end
 
         if wso_is_valid then
@@ -713,7 +728,6 @@ parallel.waitForAll(main, hud_displayer, sound_player, message_handler)
 -- 1x1 monitor resolution at 0.5 scale is 15x10
 
 -- Priority: new features planned
--- TODO: split the horizon into 2 lines, like huds irl (2x3 I'm thinking --> width//2 -1)
 -- TODO: config file: if no config, prompt for answers with read()
 --                    run arg[1] "settings" to get config screen again.
 --                    look into default answers --> https://tweaked.cc/library/cc.completion.html
