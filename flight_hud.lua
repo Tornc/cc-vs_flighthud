@@ -12,6 +12,7 @@ local pretty = require("cc.pretty")
 ]]
 
 local bit32 = require("bit32")
+local completion = require("cc.completion")
 local dfpwm = require("cc.audio.dfpwm")
 
 --[[
@@ -26,28 +27,27 @@ local SPEAKER = peripheral.find("speaker")
 --[[
     CONSTANTS
 ]]
--- You can touch these
-local GROUND_LEVEL = tonumber(arg[1]) or 0   -- Change this to how high your map's ground level is.
-local SHIPYARD_DIRECTION = string.match(string.upper(arg[2] or ""), "^[NESW]$") or "N"
+local GROUND_LEVEL
+local SHIPYARD_DIRECTION
 local TAKEN_OFF_THRESHOLD = 20               -- How many blocks into the air you need to be for the voice warnings to be enabled
 local LANDED_THRESHOLD = 3                   -- How close to ground level you need to be for the voice warnings to be disabled
 local GROUND_WARNING_THRESHOLD = 70          --
 local CRITICAL_GROUND_WARNING_THRESHOLD = 30 --
 local G_FORCE_WARNING_THRESHOLD = 8.5        --
 local TARGET_NEARBY_THRESHOLD = 150          -- In blocks. Only useful if flighthud receives messages from wso_comp
-
 local SOUNDS = {                             -- Format: "FILE_NAME", sound cooldown in ticks
     ground_warning = { "ALTITUDE", 150 },
     critical_ground_warning = { "PULL_UP", 60 },
     over_g_warning = { "OVER_G", 100 },
     hit_warning = { "WARNING", 60 },                   -- Look, I don't have a better system other than mass to detect damage
 }
-local SOUND_VOLUME = 1                                 -- 0.0 to 3.0
-
+local SOUND_VOLUME = 3                                 -- 0.0 to 3.0
 local HUD_BACKGROUND_COLOUR = colours.packRGB(0, 0, 0) -- Colour is on a scale of 0 (min) to 1 (max).
 local HUD_TEXT_COLOUR = colours.packRGB(0, 1, 0)       --
 local TARGET_NEARBY_COLOUR = colours.packRGB(1, 0, 0)  -- Heading indicator will turn this colour when nearby a target
 local SCREEN_WIDTH, SCREEN_HEIGHT = 15, 10             -- Minimum is 15 width, 10 height. Width should be odd!
+local HOLOGRAM_OFFSET
+
 -- How often the script runs (3 = once every 3 ticks), increase if the screen flickers a lot (lag)
 local DELTA_TICK = 3
 
@@ -56,9 +56,15 @@ local MY_ID = "pilot_comp"
 local WSO_ID = "wso_comp"
 local INCOMING_CHANNEL, OUTGOING_CHANNEL = 6060, 6060
 
+-- Settings
+local SETTINGS_FILE_PATH = "fh.settings"
+local ARG_ASK_SETTINGS = "settings"
+local ARG_ASK_ALL_SETTINGS = "allsettings"
+
 -- No need to touch these
-local VERSION = "5.0"
-local GRAVITY_VEC = vector.new(0, -10, 0) -- m/s (I'm using CBC's gravity value)
+local VERSION = "5.1-wip"
+
+local GRAVITY_VEC = vector.new(0, -10, 0) -- m/s (I'm using Valkyrien Skies 2's gravity value)
 local SOUND_EXTENSION_TYPE = "dfpwm"
 local DECODER = dfpwm.make_decoder()
 local DIRECTIONS = { "N", "E", "S", "W" }
@@ -76,6 +82,7 @@ local CC_TO_GBK = {
     ["\x1E"] = "^", -- Up triangle
     ["\x10"] = ">", -- Right triangle
     ["\x11"] = "<", -- Left triangle
+    ["\x05"] = "+", -- ^=_ plane-looking thingy
 }
 
 --[[
@@ -132,6 +139,13 @@ local function clamp(value, min, max)
     return math.min(max, math.max(min, value))
 end
 
+local function contains(table, value)
+    for _, v in pairs(table) do
+        if v == value then return true end
+    end
+    return false
+end
+
 local function format_time(seconds)
     if seconds < 1000 then
         return string.format("%ds", seconds)
@@ -179,6 +193,96 @@ local function tbl_to_vec(table)
 end
 
 --[[
+    SETTINGS
+]]
+
+local function define_settings()
+    settings.define(
+        "ground_level",
+        {
+            description = "How high your map's ground level is.",
+            default = 0,
+            type = "number",
+        }
+    )
+    settings.define(
+        "shipyard_direction",
+        {
+            description = "North/East/South/West",
+            default = "North",
+            type = "string",
+        }
+    )
+    settings.define(
+        "hologram_offset",
+        {
+            description = "X Y Z",
+            default = { 0, 0, 0 },
+            type = "table",
+        }
+    )
+end
+
+local function ask_setting(question, completions, validity_func)
+    local input
+    while true do
+        print(question)
+        write("> ")
+        input = read(nil, nil, function(text) return completion.choice(text, completions) end)
+        if validity_func(input, completions) then
+            return input
+        else
+            print("\"" .. input .. "\" is not valid.")
+        end
+    end
+end
+
+local function set_save_settings(all)
+    local ground_level = ask_setting("Ground level?", { "0" }, function(i) return tonumber(i) end)
+    settings.set("ground_level", tonumber(ground_level))
+    local shipyard_direction = ask_setting("Shipyard direction?", { "North", "East", "South", "West" }, function(i, c)
+        return contains(c, i)
+    end)
+    settings.set("shipyard_direction", tostring(shipyard_direction))
+    local hologram_offset
+    if HOLOGRAM then
+        local string_offset = ask_setting("Hologram offset <X Y Z>?", { "0 0 0", "-0.5 0 0", "-1.5 0 0" }, function(i)
+            local coords = {}
+            for value in i:gmatch("%S+") do
+                if tonumber(value) ~= nil then
+                    table.insert(coords, value)
+                else
+                    return false
+                end
+            end
+            return #coords == 3
+        end)
+        hologram_offset = {}
+        for v in string_offset:gmatch("%S+") do table.insert(hologram_offset, tonumber(v)) end
+    end
+    settings.set("hologram_offset", hologram_offset and hologram_offset or settings.get("hologram_offset"))
+
+    settings.save(SETTINGS_FILE_PATH)
+end
+
+local function get_settings()
+    GROUND_LEVEL = settings.get("ground_level")
+    SHIPYARD_DIRECTION = settings.get("shipyard_direction")
+    HOLOGRAM_OFFSET = tbl_to_vec(settings.get("hologram_offset"))
+end
+
+local function init_settings()
+    define_settings()
+    if (not settings.load(SETTINGS_FILE_PATH))
+        or arg[1] == string.lower(ARG_ASK_SETTINGS)
+        or arg[1] == string.lower(ARG_ASK_ALL_SETTINGS)
+    then
+        set_save_settings(arg[1] == string.lower(ARG_ASK_ALL_SETTINGS))
+    end
+    get_settings()
+end
+
+--[[
     NETWORKING
 ]]
 
@@ -217,7 +321,7 @@ local function check_sound_files_exists()
     for _, v in pairs(SOUNDS) do
         file_path = v[1] .. "." .. SOUND_EXTENSION_TYPE
         if not fs.exists(file_path) then
-            print("MISSING SOUND: " .. file_path)
+            print("MISSING SOUND:", file_path)
         end
     end
 end
@@ -413,34 +517,36 @@ local function center_display()
     local function plot_horizon_line(x0, y0, x1, y1, gap)
         gap = gap or 0
 
+        -- Multi-line type support
         y1 = math.floor(y1 * (#LINE_TYPES - 1) + 1)
         y0 = math.floor(y0 * (#LINE_TYPES - 1) + 1)
         x1 = math.floor(x1)
         x0 = math.floor(x0)
+        -- Normal bresenham's line algorithm
         local dx = math.abs(x1 - x0)
         local sx = x0 < x1 and 1 or -1
         local dy = -math.abs(y1 - y0)
         local sy = y0 < y1 and 1 or -1
         local error = dx + dy
-
+        -- This is for the line gap
         local total_steps = math.max(dx, math.abs(y1 - y0)) + 1
         local half_gap = math.floor(gap / 2)
         local gap_start = math.floor(total_steps / 2) - half_gap
         local gap_end = gap_start + gap - 1
-
         local step = 0
+
         while true do
+            -- Line type/gap
             if step < gap_start or step > gap_end then
                 local char = dx < 3 and
                     LINE_TYPES[#LINE_TYPES] or
                     LINE_TYPES[math.floor(y0 % (#LINE_TYPES - 1)) + 1]
                 write_at(
-                    x0,
-                    math.floor(y0 / (#LINE_TYPES - 1)),
+                    x0, math.floor(y0 / (#LINE_TYPES - 1)),
                     char
                 )
             end
-
+            -- Normal bresenham's line algorithm
             if x0 == x1 and y0 == y1 then break end
             local e2 = 2 * error
             if e2 >= dy then
@@ -482,8 +588,7 @@ local function center_display()
         self.min_y = self.center_y - math.floor(self.height / 2)
         self.max_y = self.center_y + math.ceil(self.height / 2) - 1 -- because of center_y + 1
 
-        self.horizon_y = 0
-        self.horizon_gap = 0 -- Honestly idk if a gap looks better.
+        self.horizon_gap = 0                                        -- Honestly idk if a gap looks better.
 
         self.pitch_values = {}
         for i = 90, -90, -20 do table.insert(self.pitch_values, i) end
@@ -493,21 +598,18 @@ local function center_display()
     end
 
     function self.draw_horizon()
-        local rounded_pitch_deg = round(plane.ori.y)
-        local rounded_roll_deg = round(plane.ori.x)
-
         -- Calculate horizon line position based on pitch
-        self.horizon_y = self.center_y + math.floor(rounded_pitch_deg * (self.height / 2) / 45)
+        local y_at_0_pitch = self.center_y + round(plane.ori.y * (self.height / 2) / 45)
 
         -- Calculate horizon line tilt based on roll
-        local roll_rad = math.rad(rounded_roll_deg)
+        local roll_rad = math.rad(plane.ori.x)
         local dx = math.cos(roll_rad) * (self.width / 2)
         local dy = math.sin(roll_rad) * (self.width / 2)
 
-        local x1 = math.floor(self.center_x - dx)
-        local y1 = math.floor(self.horizon_y - dy)
-        local x2 = math.floor(self.center_x + dx)
-        local y2 = math.floor(self.horizon_y + dy)
+        local x1 = round(self.center_x - dx)
+        local y1 = round(y_at_0_pitch - dy)
+        local x2 = round(self.center_x + dx)
+        local y2 = round(y_at_0_pitch + dy)
 
         x1, y1 = clip_point(x1, y1)
         x2, y2 = clip_point(x2, y2)
@@ -517,25 +619,24 @@ local function center_display()
     end
 
     function self.draw_pitch_ladder()
-        -- Keep in mind, the pitch ladder is dependant on the horizon_y.
-        for _, pitch in pairs(self.pitch_values) do
+        local y_at_0_pitch = self.center_y + round(plane.ori.y * (self.height / 2) / 45)
+        for i = 1, #self.pitch_values, 1 do
+            local pitch = self.pitch_values[i]
+
             local y_offset = math.floor(-pitch / 20) * self.ladder_spacing
-            local ladder_y = self.horizon_y + y_offset + 1
-            local char = pitch > 0 and "\xAF" or "_" -- High line
+            local ladder_y = y_at_0_pitch + y_offset + 1
+            local char = i > #self.pitch_values / 2 and "_" or "\xAF" -- High line
 
             -- Left and right side
             draw_ladder_line(self.center_x - round(2 / 9 * self.width), ladder_y, char)
             draw_ladder_line(self.center_x + round(2 / 9 * self.width), ladder_y, char, pitch)
         end
 
+        -- Marker showing what pitch the plane needs to face the target
         if wso_is_valid then
-            local target_y = self.horizon_y - math.floor(plane.tgt_pitch / 20) * self.ladder_spacing
-
-            -- Clamp the marker position to the visible area
-            target_y = clamp(target_y, self.min_x, self.max_y)
-
-            -- Draw the marker
-            draw_ladder_line(self.center_x - 2, target_y, "\xBB")
+            local marker_y = self.y_at_0_pitch - math.floor(plane.tgt_pitch / 20) * self.ladder_spacing
+            marker_y = clamp(marker_y, self.min_x, self.max_y)
+            draw_ladder_line(self.center_x - 2, marker_y, "\xBB")
         end
     end
 
@@ -549,9 +650,6 @@ local function center_display()
         local tvv_x = clamp(self.center_x + scaled_vz, self.min_x, self.max_x)
         local tvv_y = clamp(self.center_y - scaled_vy, self.min_y, self.max_y)
 
-        -- TODO: decide!
-        -- write_at(self.center_x, self.center_y, "+")
-        -- write_at(tvv_x, tvv_y, "+")
         write_at(tvv_x, tvv_y, "\x05") -- ^=_ symbol, idk what to call it.
     end
 
@@ -579,8 +677,13 @@ local function hud_displayer()
         -- A 1x1 hologram has 16x16 pixels.
         HOLOGRAM.Resize(120, 160)
         HOLOGRAM.SetScale(16 / 120, 16 / 160)
-        -- TODO: depends on NESW assembly direction!
-        HOLOGRAM.SetTranslation(0, 0, 1.5)
+        -- Voidpower xyz convention is different from our xyz convention
+        HOLOGRAM.SetTranslation(
+            HOLOGRAM_OFFSET.z,
+            HOLOGRAM_OFFSET.y,
+            -HOLOGRAM_OFFSET.x
+        )
+
         HOLOGRAM.SetClearColor(0x00A0FF20) -- Default: 0x00A0FF6F
     end
 
@@ -589,6 +692,11 @@ local function hud_displayer()
         if MONITOR then
             MONITOR.clear()
         end
+
+        -- TEST: REMOVE LATER
+        -- MONITOR.setTextScale(1)
+        -- write_at(1, 1, "R:" .. round(plane.ori.x))
+        -- write_at(1, 2, "P:" .. round(plane.ori.y))
 
         CENTER_DISPLAY.draw_horizon()
         CENTER_DISPLAY.draw_pitch_ladder()
@@ -657,7 +765,7 @@ local function update_information()
     -- Therefore, if a ship is built facing south, the roll will be inverted.
     -- When it’s east, roll becomes inverted pitch and pitch becomes roll.
     -- When it's west, roll becomes pitch and pitch becomes inverted roll.
-    orientation.z = orientation.z + (90 * (index_of(DIRECTIONS, SHIPYARD_DIRECTION) - 1) + 180) % 360 - 180
+    orientation.z = orientation.z + (90 * (index_of(DIRECTIONS, SHIPYARD_DIRECTION:sub(1, 1)) - 1) + 180) % 360 - 180
     if SHIPYARD_DIRECTION == "S" then
         orientation.x = -orientation.x
     elseif SHIPYARD_DIRECTION == "E" then
@@ -707,6 +815,9 @@ end
 local function main()
     print("Ground level:", GROUND_LEVEL)
     print("Shipyard direction:", SHIPYARD_DIRECTION)
+    if HOLOGRAM then
+        print("Hologram offset:", HOLOGRAM_OFFSET)
+    end
     while true do
         current_time = round(os.epoch("utc") * 0.02) -- Convert milliseconds to ticks
 
@@ -722,20 +833,29 @@ end
 local display_string = "=][= Flight Hud v" .. VERSION .. " =][="
 print(display_string)
 print(string.rep("-", #display_string))
+print("Optional program arguments:")
+print("flight_hud <" .. ARG_ASK_SETTINGS .. "> or <" .. ARG_ASK_ALL_SETTINGS .. ">")
+print(string.rep("-", #display_string))
+
+init_settings()
 parallel.waitForAll(main, hud_displayer, sound_player, message_handler)
 
 -- 1x1 monitor resolution is only 7x4 💀
 -- 1x1 monitor resolution at 0.5 scale is 15x10
 
+-- Priority: Bugfixing (end it all)
+-- TODO: invert pitch ladder when plane is upside down (see roll!)
+
 -- Priority: new features planned
--- TODO: config file: if no config, prompt for answers with read()
---                    run arg[1] "settings" to get config screen again.
---                    look into default answers --> https://tweaked.cc/library/cc.completion.html
---                    autocomplete: north, east, south, west
+-- TODO: add all settings to config
 
 -- Priority: procrastination
--- ✨ E N C R Y P T I O N ✨
--- Draw to window, this will prevent screen flickering because window acts as a frame buffer.
--- Make hud fully scalable --> scale values like spd/alt (especially pitch ladder) too.
 -- Make a proper wiki with setup and explanation of the quirks and what the HUD elements
 -- actually mean.
+-- TODO: automatically download all the sound files, see sounddemo (IMPORTANT: link the raw files!!!)
+--       make it so you can choose the nationality in config, then download if they dont exist
+-- TODO: check for new version and automatically download (prompt if found, then y/n --> don't show again? --> change config = false (default true))
+
+-- Priority: never mind
+-- ✨ E N C R Y P T I O N ✨
+-- Draw to window, this will prevent screen flickering because window acts as a frame buffer.
