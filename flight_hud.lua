@@ -89,7 +89,7 @@ local CC_TO_GBK = {
     STATE VARIABLES
 ]]
 
-local current_time = 0
+local current_time, previous_time = 0, 0
 local plane = {
     pos = vector.new(),   -- Position
     vel = vector.new(),   -- Velocity
@@ -366,7 +366,7 @@ local function sound_player()
             end
         end
 
-        sleep(DELTA_TICK / 20)
+        sleep(DELTA_TICK * 0.05)
     end
 end
 
@@ -726,7 +726,7 @@ local function hud_displayer()
             end
         end
 
-        sleep(DELTA_TICK / 20)
+        sleep(DELTA_TICK * 0.05)
     end
 end
 
@@ -745,7 +745,7 @@ local function update_information()
     )
 
     -- G-force
-    local dt = DELTA_TICK * 0.05
+    local dt = (current_time - previous_time) * 0.05 -- This is more lag resistant than using DELTA_TICK
     local linear_acc = (velocity - plane.vel) / dt
     local centripetal_acc = omega:cross(velocity)
     local total_acc = linear_acc + centripetal_acc + GRAVITY_VEC
@@ -766,11 +766,11 @@ local function update_information()
     -- When it’s east, roll becomes inverted pitch and pitch becomes roll.
     -- When it's west, roll becomes pitch and pitch becomes inverted roll.
     orientation.z = orientation.z + (90 * (index_of(DIRECTIONS, SHIPYARD_DIRECTION:sub(1, 1)) - 1) + 180) % 360 - 180
-    if SHIPYARD_DIRECTION == "S" then
+    if SHIPYARD_DIRECTION == "South" then
         orientation.x = -orientation.x
-    elseif SHIPYARD_DIRECTION == "E" then
+    elseif SHIPYARD_DIRECTION == "East" then
         orientation.x, orientation.y = -orientation.y, orientation.x
-    elseif SHIPYARD_DIRECTION == "W" then
+    elseif SHIPYARD_DIRECTION == "West" then
         orientation.x, orientation.y = orientation.y, -orientation.x
     end
 
@@ -810,6 +810,8 @@ local function update_information()
             end
         end
     end
+
+    previous_time = current_time
 end
 
 local function main()
@@ -826,7 +828,7 @@ local function main()
 
         clear_disconnected_ids()
         update_information()
-        sleep(DELTA_TICK / 20)
+        sleep(DELTA_TICK * 0.05) -- Convert ticks to seconds
     end
 end
 
@@ -845,6 +847,7 @@ parallel.waitForAll(main, hud_displayer, sound_player, message_handler)
 
 -- Priority: Bugfixing (end it all)
 -- TODO: invert pitch ladder when plane is upside down (see roll!)
+--       idea: https://stackoverflow.com/questions/14415753/wrap-value-into-range-min-max-without-division
 
 -- Priority: new features planned
 -- TODO: add all settings to config
